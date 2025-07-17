@@ -2,9 +2,11 @@ import sqlite3
 
 database_name = "database.db"
 
-# Returns the connection object
+def connect():
+    return sqlite3.connect(database_name,autocommit=True)
+
 def init_database():
-    db = sqlite3.connect(database_name,autocommit=True)
+    db = connect()
 
     cur = db.cursor()
 
