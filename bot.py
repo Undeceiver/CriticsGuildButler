@@ -130,8 +130,7 @@ class CriticsGuildButler(discord.Client):
         thread:discord.Thread = await self.fetch_channel(thread_id)
 
         # For now we just provide the link.
-        return thread.jump_url
-
+        return thread.jump_url    
 
     ###
     # Interaction support methods
@@ -168,6 +167,17 @@ class CriticsGuildButler(discord.Client):
             await message.reply(content=content, embeds=embeds, allowed_mentions=discord.AllowedMentions(users=[]), **kwargs)
         else:
             await message.reply(content=content, embeds=embeds, **kwargs)
+
+    async def check_admin_channel(self, interaction: discord.Interaction):
+        if interaction.channel_id != self.log_channel_id:
+            response = f"This command can only be run in {self.log_channel_obj.jump_url}."
+            await self.send_response(interaction, response)
+            return False
+        else:
+            return True
+
+    async def send_admin_channel(self, content = None, embeds = None, mentions = False, **kwargs):
+        return await self.send_channel(self.log_channel_obj, content, embeds, mentions, **kwargs)
     
     ###
     # Logging
@@ -187,17 +197,17 @@ class CriticsGuildButler(discord.Client):
                     await self.log_system(db, f"Attempt to write log entry with request_id not present in the database: {request_id}",cause_id=None)
                     request_id = None
 
-            timestamp = datetime.datetime.now()
+            timestamp = datetime.datetime.now(tz = None)
 
             cursor.execute("INSERT INTO log (user_id, request_id, timestamp, class, cause_id, summary) VALUES (?,?,?,?,?,?)",(user_id, request_id, timestamp, log_class.value, cause_id, summary))
             log_id = cursor.lastrowid
         except sqlite3.Error as e:
             print(f"SQLite error when trying to insert into the database!!: {e}")
-            await self.send_channel(self.log_channel_obj, content=f"IMPORTANT!! There was an error when trying to write the log message into the database. Please check.")            
+            await self.send_admin_channel(content=f"IMPORTANT!! There was an error when trying to write the log message into the database. Please check.")            
 
         message = f"{self.get_class_icon(log_class)}{log_class.name}/{log_id} - {summary}"
 
-        await self.send_channel(self.log_channel_obj, content=message, embeds=None, mentions=False,**kwargs)
+        await self.send_admin_channel(content=message,**kwargs)
 
         if self.print_log:
             print(f"{timestamp} - {message}")
@@ -249,9 +259,13 @@ class CriticsGuildButler(discord.Client):
         @app_commands.describe(user="User to check status")
         async def checkuser(interaction: discord.Interaction, user: discord.Member):
             await self.defer(interaction)
-            db = self.db_connect()
+            if not await self.check_admin_channel(interaction):                    
+                return
 
-            try:
+            db = self.db_connect()           
+
+            try:                
+
                 user_mention = self.mention_user(interaction.user.id)
                 target_user_mention = self.mention_user(user.id)
                 command_id = await self.log_command(db,f"{user_mention} checked the status of {target_user_mention}.",interaction.user.id)
@@ -326,23 +340,92 @@ class CriticsGuildButler(discord.Client):
 
                     """)
 
-                result += "Active mapper requests:\n\n"
+                await self.send_admin_channel(result)
 
-                for mapper_thread_id in mapper_thread_ids:
-                    thread_str = await self.display_request(mapper_thread_id)
-                    result += f"{thread_str}\n"
+                if len(mapper_thread_ids) > 0:                    
+                    await self.send_admin_channel("Active mapper requests:")                              
 
-                result += "\n"
+                    for mapper_thread_id in mapper_thread_ids:
+                        thread_str = await self.display_request(mapper_thread_id)
+                        await self.send_admin_channel(thread_str)
+                else:
+                    await self.send_admin_channel("No active mapper requests.")                
+                
+                if len(critic_thread_ids) > 0:
+                    await self.send_admin_channel("Active critic requests:")
 
-                result += "Active critic requests:\n\n"
+                    for critic_thread_id in critic_thread_ids:
+                        thread_str = await self.display_request(critic_thread_id)
+                        result += f"{thread_str}\n"
+                else:
+                    await self.send_admin_channel("No active critic requests")    
+                
+                await self.send_response(interaction,"Command complete.")
+            except Exception as e:                
+                await self.log_system(db, f"UNCAUGHT EXCEPTION! - {str(e)}")
+            
+            db.close()
 
-                for critic_thread_id in critic_thread_ids:
-                    thread_str = await self.display_request(critic_thread_id)
-                    result += f"{thread_str}\n"
+        @self.tree.command(description="(Admin only) Check user log")
+        @app_commands.default_permissions(administrator=True)
+        @app_commands.checks.has_permissions(administrator=True)
+        @app_commands.describe(user="User to check log", days="Number of past days to check the log for", max_messages="Maximum number of log messages to print", commands="Include commands", results="Include results", errors="Include errors")
+        async def checkuserlog(interaction: discord.Interaction, user: discord.Member, days:int = 1, max_messages:int = 10, commands:bool = True, results:bool = True, errors:bool = True):
+            await self.defer(interaction)
+            if not await self.check_admin_channel(interaction):                    
+                return
 
-                result += "\n"
+            db = self.db_connect()
 
-                await self.send_response(interaction,result)
+            try:
+                user_mention = self.mention_user(interaction.user.id)
+                target_user_mention = self.mention_user(user.id)
+                command_id = await self.log_command(db,f"{user_mention} checked the log for {target_user_mention}.",interaction.user.id)
+
+                check_user(db,user.id)
+
+                cur = db.cursor()
+
+                query = """
+                    SELECT
+                        l.log_id,
+                        l.request_id,
+                        datetime(l.timestamp),
+                        l.class,
+                        l.summary
+                    FROM log l
+                    WHERE
+                        l.user_id = :user_id AND (julianday('now') - julianday(l.timestamp)) < :days
+                        AND (
+                            (:commands AND l.class = :command_class) OR
+                            (:results AND l.class = :result_class) OR
+                            (:errors AND l.class = :error_class)
+                        )
+                    ORDER BY l.timestamp DESC
+                    LIMIT :max_messages
+                    """
+                data = {"user_id":user.id, "days": days, "commands": commands, "command_class": LogClass.COMMAND.value, "results": results, "result_class": LogClass.RESULT.value, "errors": errors, "error_class":LogClass.ERROR.value, "max_messages":max_messages}
+                res = cur.execute(query,data)
+                logs = res.fetchall()
+                logs.reverse()
+
+                async def log_message(log):
+                    (log_id, request_id, date_str, log_class_id, summary) = log
+                    log_class = LogClass(log_class_id)                    
+
+                    message = f"{self.get_class_icon(log_class)}{log_class.name}/{log_id} ({date_str}) - {summary}"
+
+                    if not request_id is None:
+                        thread_str = await self.display_request(request_id)
+                        message += f" (on {thread_str})"
+
+                    return message
+                                
+                for log in logs:
+                    result = await log_message(log)
+                    await self.send_admin_channel(result)
+
+                await self.send_response(interaction, "Command complete.")
             except Exception as e:                
                 await self.log_system(db, f"UNCAUGHT EXCEPTION! - {str(e)}")
             
