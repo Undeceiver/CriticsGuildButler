@@ -585,16 +585,16 @@ class CriticsGuildButler(discord.Client):
                 target_user_mention = self.mention_user(user.id)
                 command_id = await self.log_command(db,f"{user_mention} rewarded {target_user_mention} {self.tokens(tokens)} with reason: {reason}.",interaction.user.id)
 
+                if not self.check_trusted_critic(db, interaction, command_name="/rewardtokens", cause_id = command_id):
+                    db.close()
+                    return
+
                 if not check_user(db,user.id,create=False):
                     await self.log_error(db, summary=f"{target_user_mention} cannot be rewarded {self.tokens(-1)} because they have never interacted with the bot before.", user_id=interaction.user.id,cause_id=command_id)
                     await self.send_response(interaction, f"{target_user_mention} cannot be rewarded {self.tokens(-1)} because they have never interacted with the bot before. This is an intentional limitation. Please do not reward users unless they have participated in the guild before.")
                     db.close()
                     return
-
-                if not self.check_trusted_critic(db, interaction, command_name="/rewardtokens", cause_id = command_id):
-                    db.close()
-                    return
-
+                
                 if tokens <= 0:
                     await self.log_error(db, summary=f"{user_mention} tried to reward {self.tokens(0)}.", user_id=interaction.user.id,cause_id=command_id)
                     await self.send_response(interaction,f"Please introduce a positive amount of {self.tokens(-1)} to reward.")
@@ -625,15 +625,15 @@ class CriticsGuildButler(discord.Client):
                 target_user_mention = self.mention_user(user.id)
                 command_id = await self.log_command(db,f"{user_mention} rewarded {target_user_mention} {self.stars(1)} with reason: {reason}.",interaction.user.id)
 
+                if not self.check_trusted_critic(db, interaction, command_name="/rewardstar", cause_id = command_id):
+                    db.close()
+                    return                
+                
                 if not check_user(db,user.id,create=False):
                     await self.log_error(db, summary=f"{target_user_mention} cannot be rewarded {self.stars(1)} because they have never interacted with the bot before.", user_id=interaction.user.id,cause_id=command_id)
                     await self.send_response(interaction, f"{target_user_mention} cannot be rewarded {self.stars(1)} because they have never interacted with the bot before. This is an intentional limitation. Please do not reward users unless they have participated in the guild before.")
                     db.close()
                     return
-
-                if not self.check_trusted_critic(db, interaction, command_name="/rewardstar", cause_id = command_id):
-                    db.close()
-                    return                
                                 
                 def increase_stars_fun(previous):
                     return previous + 1
