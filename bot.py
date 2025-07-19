@@ -161,7 +161,7 @@ class CriticsGuildButler(discord.Client):
 
         return (previous_tokens,new_tokens)
 
-    async def update_stars(self, db, user_id, update_fun, request_id = None, cause_id = None, **kwargs):
+    async def update_stars(self, db, user_id, update_fun, request_id = None, cause_id = None, update_historic=True, **kwargs):
         cur = db.cursor()
 
         query = """
@@ -175,22 +175,32 @@ class CriticsGuildButler(discord.Client):
         (previous_stars, previous_historic_stars) = res.fetchone()        
 
         new_stars = update_fun(previous_stars)
-        diff_stars = new_stars - previous_stars
-        new_historic_stars = previous_historic_stars + diff_stars
 
-        query_update = """
-            UPDATE user
-            SET stars = :stars, historic_stars = :historic_stars
-            WHERE user_id = :user_id
-        """
-        data = {"stars":new_stars, "historic_stars":new_historic_stars, "user_id":user_id}
-        cur.execute(query_update,data)
+        if update_historic:
+            diff_stars = new_stars - previous_stars
+            new_historic_stars = previous_historic_stars + diff_stars
+
+            query_update = """
+                UPDATE user
+                SET stars = :stars, historic_stars = :historic_stars
+                WHERE user_id = :user_id
+            """
+            data = {"stars":new_stars, "historic_stars":new_historic_stars, "user_id":user_id}
+            cur.execute(query_update,data)
+        else:
+            query_update = """
+                UPDATE user
+                SET stars = :stars
+                WHERE user_id = :user_id
+            """
+            data = {"stars":new_stars, "user_id":user_id}
+            cur.execute(query_update,data)
 
         await self.log_stars(db, user_id, previous_stars, new_stars, request_id, cause_id, **kwargs)
 
         return (previous_stars,new_stars)
 
-    async def update_mapper_upvotes(self, db, user_id, update_fun, request_id = None, cause_id = None, **kwargs):
+    async def update_mapper_upvotes(self, db, user_id, update_fun, request_id = None, cause_id = None, update_historic=True, **kwargs):
         cur = db.cursor()
 
         query = """
@@ -204,22 +214,32 @@ class CriticsGuildButler(discord.Client):
         (previous_upvotes, previous_historic_upvotes) = res.fetchone()        
 
         new_upvotes = update_fun(previous_upvotes)
-        diff_upvotes = new_upvotes - previous_upvotes
-        new_historic_upvotes = previous_historic_upvotes + diff_upvotes
 
-        query_update = """
-            UPDATE user
-            SET mapper_upvotes = :upvotes, historic_mapper_upvotes = :historic_upvotes
-            WHERE user_id = :user_id
-        """
-        data = {"upvotes":new_upvotes, "historic_upvotes":new_historic_upvotes, "user_id":user_id}
-        cur.execute(query_update,data)
+        if update_historic:
+            diff_upvotes = new_upvotes - previous_upvotes
+            new_historic_upvotes = previous_historic_upvotes + diff_upvotes
+
+            query_update = """
+                UPDATE user
+                SET mapper_upvotes = :upvotes, historic_mapper_upvotes = :historic_upvotes
+                WHERE user_id = :user_id
+            """
+            data = {"upvotes":new_upvotes, "historic_upvotes":new_historic_upvotes, "user_id":user_id}
+            cur.execute(query_update,data)
+        else:
+            query_update = """
+                UPDATE user
+                SET mapper_upvotes = :upvotes
+                WHERE user_id = :user_id
+            """
+            data = {"upvotes":new_upvotes, "user_id":user_id}
+            cur.execute(query_update,data)
 
         await self.log_mapper_upvotes(db, user_id, previous_upvotes, new_upvotes, request_id, cause_id, **kwargs)
 
         return (previous_upvotes,new_upvotes)
 
-    async def update_critic_upvotes(self, db, user_id, update_fun, request_id = None, cause_id = None, **kwargs):
+    async def update_critic_upvotes(self, db, user_id, update_fun, request_id = None, cause_id = None, update_historic=True, **kwargs):
         cur = db.cursor()
 
         query = """
@@ -233,16 +253,26 @@ class CriticsGuildButler(discord.Client):
         (previous_upvotes, previous_historic_upvotes) = res.fetchone()        
 
         new_upvotes = update_fun(previous_upvotes)
-        diff_upvotes = new_upvotes - previous_upvotes
-        new_historic_upvotes = previous_historic_upvotes + diff_upvotes
 
-        query_update = """
-            UPDATE user
-            SET critic_upvotes = :upvotes, historic_critic_upvotes = :historic_upvotes
-            WHERE user_id = :user_id
-        """
-        data = {"upvotes":new_upvotes, "historic_upvotes":new_historic_upvotes, "user_id":user_id}
-        cur.execute(query_update,data)
+        if update_historic:
+            diff_upvotes = new_upvotes - previous_upvotes
+            new_historic_upvotes = previous_historic_upvotes + diff_upvotes
+
+            query_update = """
+                UPDATE user
+                SET critic_upvotes = :upvotes, historic_critic_upvotes = :historic_upvotes
+                WHERE user_id = :user_id
+            """
+            data = {"upvotes":new_upvotes, "historic_upvotes":new_historic_upvotes, "user_id":user_id}
+            cur.execute(query_update,data)
+        else:
+            query_update = """
+                UPDATE user
+                SET critic_upvotes = :upvotes
+                WHERE user_id = :user_id
+            """
+            data = {"upvotes":new_upvotes, "user_id":user_id}
+            cur.execute(query_update,data)
 
         await self.log_critic_upvotes(db, user_id, previous_upvotes, new_upvotes, request_id, cause_id, **kwargs)
 
@@ -585,7 +615,7 @@ class CriticsGuildButler(discord.Client):
                 target_user_mention = self.mention_user(user.id)
                 command_id = await self.log_command(db,f"{user_mention} rewarded {target_user_mention} {self.tokens(tokens)} with reason: {reason}.",interaction.user.id)
 
-                if not self.check_trusted_critic(db, interaction, command_name="/rewardtokens", cause_id = command_id):
+                if not await self.check_trusted_critic(db, interaction, command_name="/rewardtokens", cause_id = command_id):
                     db.close()
                     return
 
@@ -625,7 +655,7 @@ class CriticsGuildButler(discord.Client):
                 target_user_mention = self.mention_user(user.id)
                 command_id = await self.log_command(db,f"{user_mention} rewarded {target_user_mention} {self.stars(1)} with reason: {reason}.",interaction.user.id)
 
-                if not self.check_trusted_critic(db, interaction, command_name="/rewardstar", cause_id = command_id):
+                if not await self.check_trusted_critic(db, interaction, command_name="/rewardstar", cause_id = command_id):
                     db.close()
                     return                
                 
@@ -641,6 +671,7 @@ class CriticsGuildButler(discord.Client):
                 (previous_stars, new_stars) = await self.update_stars(db,user.id,increase_stars_fun,cause_id=command_id)
 
                 await self.send_response(interaction, f"You rewarded {target_user_mention} {self.stars(1)}.")                
+                await self.send_dm(user, f"A trusted critic rewarded you {self.stars(1)} with reason: {reason}")
             except Exception as e:                
                 await self.log_system(db, f"UNCAUGHT EXCEPTION! - {str(e)}")
             
@@ -1122,3 +1153,312 @@ class CriticsGuildButler(discord.Client):
                 await self.log_system(db, f"UNCAUGHT EXCEPTION! - {str(e)}")
             
             db.close()
+
+        @self.tree.command(description=f"(Admin only) Check {self.stars(-1)} leaderboard.")
+        @app_commands.default_permissions(administrator=True)
+        @app_commands.checks.has_permissions(administrator=True)
+        @app_commands.describe(max_critics="Maximum number of critics to show.")
+        async def starleaderboard(interaction: discord.Interaction, max_critics:int = 10, historic: bool = False):
+            await self.defer(interaction)
+            if not await self.check_admin_channel(interaction):                    
+                return
+
+            db = self.db_connect()
+
+            try:
+                user_mention = self.mention_user(interaction.user.id)
+                if historic:
+                    message = f"{user_mention} checked the **historic** {self.stars(-1)} leaderboard (maximum of {max_critics} critics)."
+                else:
+                    message = f"{user_mention} checked the {self.stars(-1)} leaderboard (maximum of {max_critics} critics)."
+
+                command_id = await self.log_command(db,message,interaction.user.id)
+                
+                cur = db.cursor()
+
+                if historic:
+                    query = """
+                        SELECT
+                            u.user_id,
+                            u.stars,
+                            u.historic_stars
+                        FROM user u
+                        ORDER BY u.historic_stars DESC
+                        LIMIT :max_critics
+                        """
+                else:
+                    query = """
+                        SELECT
+                            u.user_id,
+                            u.stars,
+                            u.historic_stars
+                        FROM user u
+                        ORDER BY u.stars DESC
+                        LIMIT :max_critics
+                        """
+                
+                data = {"max_critics":max_critics}
+                res = cur.execute(query,data)
+                critics = res.fetchall()                                
+                                
+                i = 0
+                for critic in critics:
+                    i += 1
+                    (user_id, stars, historic_stars) = critic
+                    critic_mention = self.mention_user(user_id)
+                    await self.send_admin_channel(f"{i} - {critic_mention} - {self.stars(stars)} / {self.stars(historic_stars)} (historic)")
+                
+                await self.send_response(interaction, "Command complete.")
+            except Exception as e:                
+                await self.log_system(db, f"UNCAUGHT EXCEPTION! - {str(e)}")
+            
+            db.close()
+
+        @self.tree.command(description=f"(Admin only) Check critic {self.upvotes(-1)} leaderboard.")
+        @app_commands.default_permissions(administrator=True)
+        @app_commands.checks.has_permissions(administrator=True)
+        @app_commands.describe(max_critics="Maximum number of critics to show.")
+        async def criticupvoteleaderboard(interaction: discord.Interaction, max_critics:int = 10, historic: bool = False):
+            await self.defer(interaction)
+            if not await self.check_admin_channel(interaction):                    
+                return
+
+            db = self.db_connect()
+
+            try:
+                user_mention = self.mention_user(interaction.user.id)
+                if historic:
+                    message = f"{user_mention} checked the **historic** critic {self.upvotes(-1)} leaderboard (maximum of {max_critics} critics)."
+                else:
+                    message = f"{user_mention} checked the critic {self.upvotes(-1)} leaderboard (maximum of {max_critics} critics)."
+
+                command_id = await self.log_command(db,message,interaction.user.id)
+                
+                cur = db.cursor()
+
+                if historic:
+                    query = """
+                        SELECT
+                            u.user_id,
+                            u.critic_upvotes,
+                            u.historic_critic_upvotes
+                        FROM user u
+                        ORDER BY u.historic_critic_upvotes DESC
+                        LIMIT :max_critics
+                        """
+                else:
+                    query = """
+                        SELECT
+                            u.user_id,
+                            u.critic_upvotes,
+                            u.historic_critic_upvotes
+                        FROM user u
+                        ORDER BY u.critic_upvotes DESC
+                        LIMIT :max_critics
+                        """
+                
+                data = {"max_critics":max_critics}
+                res = cur.execute(query,data)
+                critics = res.fetchall()                                
+                                
+                i = 0
+                for critic in critics:
+                    i += 1
+                    (user_id, critic_upvotes, historic_critic_upvotes) = critic
+                    critic_mention = self.mention_user(user_id)
+                    await self.send_admin_channel(f"{i} - {critic_mention} - {self.upvotes(critic_upvotes)} / {self.upvotes(historic_critic_upvotes)} (historic)")
+                
+                await self.send_response(interaction, "Command complete.")
+            except Exception as e:                
+                await self.log_system(db, f"UNCAUGHT EXCEPTION! - {str(e)}")
+            
+            db.close()
+
+        @self.tree.command(description=f"(Admin only) Check mapper {self.upvotes(-1)} leaderboard.")
+        @app_commands.default_permissions(administrator=True)
+        @app_commands.checks.has_permissions(administrator=True)
+        @app_commands.describe(max_mappers="Maximum number of mappers to show.")
+        async def mapperupvoteleaderboard(interaction: discord.Interaction, max_mappers:int = 10, historic: bool = False):
+            await self.defer(interaction)
+            if not await self.check_admin_channel(interaction):                    
+                return
+
+            db = self.db_connect()
+
+            try:
+                user_mention = self.mention_user(interaction.user.id)
+                if historic:
+                    message = f"{user_mention} checked the **historic** mapper {self.upvotes(-1)} leaderboard (maximum of {max_mappers} mappers)."
+                else:
+                    message = f"{user_mention} checked the mapper {self.upvotes(-1)} leaderboard (maximum of {max_mappers} mappers)."
+
+                command_id = await self.log_command(db,message,interaction.user.id)
+                
+                cur = db.cursor()
+
+                if historic:
+                    query = """
+                        SELECT
+                            u.user_id,
+                            u.mapper_upvotes,
+                            u.historic_mapper_upvotes
+                        FROM user u
+                        ORDER BY u.historic_mapper_upvotes DESC
+                        LIMIT :max_mappers
+                        """
+                else:
+                    query = """
+                        SELECT
+                            u.user_id,
+                            u.mapper_upvotes,
+                            u.historic_mapper_upvotes
+                        FROM user u
+                        ORDER BY u.mapper_upvotes DESC
+                        LIMIT :max_mappers
+                        """
+                
+                data = {"max_mappers":max_mappers}
+                res = cur.execute(query,data)
+                mappers = res.fetchall()                                
+                                
+                i = 0
+                for mapper in mappers:
+                    i += 1
+                    (user_id, mapper_upvotes, historic_mapper_upvotes) = mapper
+                    mapper_mention = self.mention_user(user_id)
+                    await self.send_admin_channel(f"{i} - {mapper_mention} - {self.upvotes(mapper_upvotes)} / {self.upvotes(historic_mapper_upvotes)} (historic)")
+                
+                await self.send_response(interaction, "Command complete.")
+            except Exception as e:                
+                await self.log_system(db, f"UNCAUGHT EXCEPTION! - {str(e)}")
+            
+            db.close()
+
+        @self.tree.command(description=f"(Admin only) Check critic completed requests leaderboard.")
+        @app_commands.default_permissions(administrator=True)
+        @app_commands.checks.has_permissions(administrator=True)
+        @app_commands.describe(max_critics="Maximum number of critics to show.")
+        async def criticcompletionleaderboard(interaction: discord.Interaction, max_critics:int = 10):
+            await self.defer(interaction)
+            if not await self.check_admin_channel(interaction):                    
+                return
+
+            db = self.db_connect()
+
+            try:
+                user_mention = self.mention_user(interaction.user.id)
+                message = f"{user_mention} checked the critic completed requests leaderboard (maximum of {max_critics} critics)."
+
+                command_id = await self.log_command(db,message,interaction.user.id)
+                
+                cur = db.cursor()
+
+                query = """
+                    SELECT
+                        u.user_id,
+                        u.completed_critic_requests
+                    FROM user u
+                    ORDER BY u.completed_critic_requests DESC
+                    LIMIT :max_critics
+                    """
+                
+                data = {"max_critics":max_critics}
+                res = cur.execute(query,data)
+                critics = res.fetchall()                                
+                                
+                i = 0
+                for critic in critics:
+                    i += 1
+                    (user_id, critic_requests) = critic
+                    critic_mention = self.mention_user(user_id)
+                    await self.send_admin_channel(f"{i} - {critic_mention} - {critic_requests} completed critic requests")
+                
+                await self.send_response(interaction, "Command complete.")
+            except Exception as e:                
+                await self.log_system(db, f"UNCAUGHT EXCEPTION! - {str(e)}")
+            
+            db.close
+
+        @self.tree.command(description=f"(Admin only) Check mapper completed requests leaderboard.")
+        @app_commands.default_permissions(administrator=True)
+        @app_commands.checks.has_permissions(administrator=True)
+        @app_commands.describe(max_mappers="Maximum number of mappers to show.")
+        async def mappercompletionleaderboard(interaction: discord.Interaction, max_mappers:int = 10):
+            await self.defer(interaction)
+            if not await self.check_admin_channel(interaction):                    
+                return
+
+            db = self.db_connect()
+
+            try:
+                user_mention = self.mention_user(interaction.user.id)
+                message = f"{user_mention} checked the mapper completed requests leaderboard (maximum of {max_mappers} critics)."
+
+                command_id = await self.log_command(db,message,interaction.user.id)
+                
+                cur = db.cursor()
+
+                query = """
+                    SELECT
+                        u.user_id,
+                        u.completed_mapper_requests
+                    FROM user u
+                    ORDER BY u.completed_mapper_requests DESC
+                    LIMIT :max_mappers
+                    """
+                
+                data = {"max_mappers":max_mappers}
+                res = cur.execute(query,data)
+                mappers = res.fetchall()                                
+                                
+                i = 0
+                for mapper in mappers:
+                    i += 1
+                    (user_id, mapper_requests) = mapper
+                    mapper_mention = self.mention_user(user_id)
+                    await self.send_admin_channel(f"{i} - {mapper_mention} - {mapper_requests} completed mapper requests")
+                
+                await self.send_response(interaction, "Command complete.")
+            except Exception as e:                
+                await self.log_system(db, f"UNCAUGHT EXCEPTION! - {str(e)}")
+            
+            db.close()
+
+        @self.tree.command(description=f"(Admin only) Reset {self.stars(-1)} and {self.upvotes(-1)} leaderboards.")
+        @app_commands.default_permissions(administrator=True)
+        @app_commands.checks.has_permissions(administrator=True)        
+        async def resetleaderboards(interaction: discord.Interaction):
+            await self.defer(interaction)
+            
+            db = self.db_connect()
+
+            try:
+                user_mention = self.mention_user(interaction.user.id)
+                message = f"{user_mention} reset the {self.stars(-1)} and {self.upvotes(-1)} leaderboards."
+
+                command_id = await self.log_command(db,message,interaction.user.id)
+                
+                cur = db.cursor()
+
+                query = """
+                    SELECT
+                        u.user_id
+                    FROM user u                    
+                    """
+                
+                res = cur.execute(query)
+                user_ids = [x[0] for x in res.fetchall()]
+
+                def reset_fun(previous):
+                    return 0
+
+                for user_id in user_ids:
+                    await self.update_stars(db,user_id,reset_fun,cause_id=command_id,update_historic=False)
+                    await self.update_mapper_upvotes(db,user_id,reset_fun,cause_id=command_id,update_historic=False)
+                    await self.update_critic_upvotes(db,user_id,reset_fun,cause_id=command_id,update_historic=False)
+                
+                await self.send_response(interaction, f"The {self.stars(-1)} and {self.upvotes(-1)} leaderboards have been reset.")
+            except Exception as e:                
+                await self.log_system(db, f"UNCAUGHT EXCEPTION! - {str(e)}")
+            
+            db.close       
