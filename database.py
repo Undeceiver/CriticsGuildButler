@@ -82,14 +82,20 @@ def create_database(db,log=True):
     if log:
         print("Database schema created!")
 
-def check_user(db, user_id):
+def check_user(db, user_id, create=True):
     cur = db.cursor()
 
     res = cur.execute("SELECT COUNT(*) FROM user WHERE user_id = ?", (user_id,))
     count = res.fetchone()[0]
 
     if count == 0:
-        cur.execute("INSERT INTO user (user_id) VALUES (?)", (user_id,))    
+        if create:
+            cur.execute("INSERT INTO user (user_id) VALUES (?)", (user_id,))    
+            return True
+        else:
+            return False
+    else:
+        return True
 
 def check_request(db, thread_id):
     cur = db.cursor()

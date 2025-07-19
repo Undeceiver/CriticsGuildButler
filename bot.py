@@ -24,7 +24,7 @@ class RequestState(Enum):
     CANCELLED = 4
 
 class CriticsGuildButler(discord.Client):   
-    def __init__(self, *, db_connect, server_ids, bot_id, log_channel_id, trusted_critic_role_id, print_log=True):      
+    def __init__(self, *, db_connect, server_ids, bot_id, log_channel_id, trusted_critic_role_id, monthly_tokens, print_log=True):      
         intents = discord.Intents.default()
         intents.message_content = True
 
@@ -34,6 +34,8 @@ class CriticsGuildButler(discord.Client):
         self.bot_id = bot_id
         self.log_channel_id = log_channel_id
         self.trusted_critic_role_id = trusted_critic_role_id
+
+        self.monthly_tokens = monthly_tokens
 
         self.print_log = print_log
 
@@ -61,6 +63,7 @@ class CriticsGuildButler(discord.Client):
         await self.server_obj.fetch_roles()
 
         self.log_channel_obj = await self.fetch_channel(self.log_channel_id)
+        self.trusted_critic_role_obj = await self.server_obj.fetch_role(self.trusted_critic_role_id)
 
         await self.log_system(db,"Butler ready.")
 
@@ -132,6 +135,145 @@ class CriticsGuildButler(discord.Client):
         # For now we just provide the link.
         return thread.jump_url    
 
+    async def update_tokens(self, db, user_id, update_fun, request_id = None, cause_id = None, **kwargs):
+        cur = db.cursor()
+
+        query = """
+            SELECT
+                u.tokens
+            FROM user u
+            WHERE u.user_id = ?
+            """
+        res = cur.execute(query,(user_id,))
+        previous_tokens = res.fetchone()[0]
+
+        new_tokens = update_fun(previous_tokens)
+
+        query_update = """
+            UPDATE user
+            SET tokens = :tokens
+            WHERE user_id = :user_id
+        """
+        data = {"tokens":new_tokens, "user_id":user_id}
+        cur.execute(query_update,data)
+
+        await self.log_tokens(db, user_id, previous_tokens, new_tokens, request_id, cause_id, **kwargs)
+
+        return (previous_tokens,new_tokens)
+
+    async def update_stars(self, db, user_id, update_fun, request_id = None, cause_id = None, **kwargs):
+        cur = db.cursor()
+
+        query = """
+            SELECT
+                u.stars,
+                u.historic_stars
+            FROM user u
+            WHERE u.user_id = ?
+            """
+        res = cur.execute(query,(user_id,))
+        (previous_stars, previous_historic_stars) = res.fetchone()        
+
+        new_stars = update_fun(previous_stars)
+        diff_stars = new_stars - previous_stars
+        new_historic_stars = previous_historic_stars + diff_stars
+
+        query_update = """
+            UPDATE user
+            SET stars = :stars, historic_stars = :historic_stars
+            WHERE user_id = :user_id
+        """
+        data = {"stars":new_stars, "historic_stars":new_historic_stars, "user_id":user_id}
+        cur.execute(query_update,data)
+
+        await self.log_stars(db, user_id, previous_stars, new_stars, request_id, cause_id, **kwargs)
+
+        return (previous_stars,new_stars)
+
+    async def update_mapper_upvotes(self, db, user_id, update_fun, request_id = None, cause_id = None, **kwargs):
+        cur = db.cursor()
+
+        query = """
+            SELECT
+                u.mapper_upvotes,
+                u.historic_mapper_upvotes
+            FROM user u
+            WHERE u.user_id = ?
+            """
+        res = cur.execute(query,(user_id,))
+        (previous_upvotes, previous_historic_upvotes) = res.fetchone()        
+
+        new_upvotes = update_fun(previous_upvotes)
+        diff_upvotes = new_upvotes - previous_upvotes
+        new_historic_upvotes = previous_historic_upvotes + diff_upvotes
+
+        query_update = """
+            UPDATE user
+            SET mapper_upvotes = :upvotes, historic_mapper_upvotes = :historic_upvotes
+            WHERE user_id = :user_id
+        """
+        data = {"upvotes":new_upvotes, "historic_upvotes":new_historic_upvotes, "user_id":user_id}
+        cur.execute(query_update,data)
+
+        await self.log_mapper_upvotes(db, user_id, previous_upvotes, new_upvotes, request_id, cause_id, **kwargs)
+
+        return (previous_upvotes,new_upvotes)
+
+    async def update_critic_upvotes(self, db, user_id, update_fun, request_id = None, cause_id = None, **kwargs):
+        cur = db.cursor()
+
+        query = """
+            SELECT
+                u.critic_upvotes,
+                u.historic_critic_upvotes
+            FROM user u
+            WHERE u.user_id = ?
+            """
+        res = cur.execute(query,(user_id,))
+        (previous_upvotes, previous_historic_upvotes) = res.fetchone()        
+
+        new_upvotes = update_fun(previous_upvotes)
+        diff_upvotes = new_upvotes - previous_upvotes
+        new_historic_upvotes = previous_historic_upvotes + diff_upvotes
+
+        query_update = """
+            UPDATE user
+            SET critic_upvotes = :upvotes, historic_critic_upvotes = :historic_upvotes
+            WHERE user_id = :user_id
+        """
+        data = {"upvotes":new_upvotes, "historic_upvotes":new_historic_upvotes, "user_id":user_id}
+        cur.execute(query_update,data)
+
+        await self.log_critic_upvotes(db, user_id, previous_upvotes, new_upvotes, request_id, cause_id, **kwargs)
+
+        return (previous_upvotes,new_upvotes)
+
+    async def update_penalties(self, db, user_id, update_fun, request_id = None, cause_id = None, **kwargs):
+        cur = db.cursor()
+
+        query = """
+            SELECT
+                u.penalties
+            FROM user u
+            WHERE u.user_id = ?
+            """
+        res = cur.execute(query,(user_id,))
+        previous_penalties = res.fetchone()[0]
+
+        new_penalties = update_fun(previous_penalties)
+
+        query_update = """
+            UPDATE user
+            SET penalties = :penalties
+            WHERE user_id = :user_id
+        """
+        data = {"penalties":new_penalties, "user_id":user_id}
+        cur.execute(query_update,data)
+
+        await self.log_penalties(db, user_id, previous_penalties, new_penalties, request_id, cause_id, **kwargs)
+
+        return (previous_penalties,new_penalties)    
+    
     ###
     # Interaction support methods
     ###
@@ -177,8 +319,17 @@ class CriticsGuildButler(discord.Client):
             return True
 
     async def send_admin_channel(self, content = None, embeds = None, mentions = False, **kwargs):
-        return await self.send_channel(self.log_channel_obj, content, embeds, mentions, **kwargs)
+        return await self.send_channel(self.log_channel_obj, content, embeds, mentions, **kwargs)    
     
+    async def check_trusted_critic(self, db, interaction: discord.Interaction, command_name, request_id = None, cause_id = None, **kwargs):
+        if not any(role.id == self.trusted_critic_role_id for role in interaction.user.roles):
+            user_mention = self.mention_user(interaction.user.id)
+            await self.log_error(db, f"{user_mention} tried to run {command_name} but they are not a trusted critic.",user_id=interaction.user.id, request_id=request_id, cause_id=cause_id, **kwargs)
+            await self.send_response(interaction, "Only trusted critics can use this command.")
+            return False
+        else:
+            return True
+
     ###
     # Logging
     ###
@@ -221,18 +372,290 @@ class CriticsGuildButler(discord.Client):
         return await self.log(db, summary,user_id=user_id,request_id=request_id,log_class=LogClass.COMMAND,cause_id=None,**kwargs)
 
     async def log_result(self, db, summary: str, user_id, request_id=None, cause_id=None, **kwargs):
-        return await self.log(db, summary,user_id=user_id,request_id=request_id,cause_id=cause_id,**kwargs)
+        return await self.log(db, summary,user_id=user_id,request_id=request_id,log_class=LogClass.RESULT,cause_id=cause_id,**kwargs)
 
     async def log_error(self, db, summary: str, user_id, request_id=None, cause_id=None, **kwargs):
-        return await self.log(db, summary,user_id=user_id,request_id=request_id,cause_id=cause_id,**kwargs)
+        return await self.log(db, summary,user_id=user_id,request_id=request_id,log_class=LogClass.ERROR,cause_id=cause_id,**kwargs)
     
+    async def log_tokens(self, db, user_id, previous_tokens, new_tokens, request_id=None, cause_id=None, **kwargs):
+        user_mention = self.mention_user(user_id)
+        return await self.log_result(db,f"{user_mention} went from {self.tokens(previous_tokens)} to {self.tokens(new_tokens)}.",user_id,request_id,cause_id,**kwargs)
+
+    async def log_mapper_upvotes(self, db, user_id, previous_upvotes, new_upvotes, request_id=None, cause_id=None, **kwargs):
+        user_mention = self.mention_user(user_id)
+        return await self.log_result(db,f"{user_mention} went from {self.upvotes(previous_upvotes)} to {self.upvotes(new_upvotes)} (mapper).",user_id,request_id,cause_id,**kwargs)
+
+    async def log_critic_upvotes(self, db, user_id, previous_upvotes, new_upvotes, request_id=None, cause_id=None, **kwargs):
+        user_mention = self.mention_user(user_id)
+        return await self.log_result(db,f"{user_mention} went from {self.upvotes(previous_upvotes)} to {self.upvotes(new_upvotes)} (critic).",user_id,request_id,cause_id,**kwargs)
+
+    async def log_stars(self, db, user_id, previous_stars, new_stars, request_id=None, cause_id=None, **kwargs):
+        user_mention = self.mention_user(user_id)
+        return await self.log_result(db,f"{user_mention} went from {self.stars(previous_stars)} to {self.stars(new_stars)}.",user_id,request_id,cause_id,**kwargs)
+
+    async def log_penalties(self, db, user_id, previous_penalties, new_penalties, request_id=None, cause_id=None, **kwargs):
+        user_mention = self.mention_user(user_id)
+        return await self.log_result(db,f"{user_mention} went from {self.penalties(previous_penalties)} to {self.penalties(new_penalties)}.",user_id,request_id,cause_id,**kwargs)
+
     ###
     # Slash Commands
     ###
     def add_commands(self):
         ###
+        # All users
+        ###
+        @self.tree.command(description=f"Claim your monthly {self.tokens(self.monthly_tokens)}.")
+        async def claimtokens(interaction: discord.Interaction):
+            await self.defer(interaction)
+            
+            db = self.db_connect()
+
+            try:
+                user_mention = self.mention_user(interaction.user.id)
+                command_id = await self.log_command(db,f"{user_mention} claimed monthly tokens.",interaction.user.id)
+
+                check_user(db,interaction.user.id)
+
+                cur = db.cursor()
+
+                query_check_claimed = """
+                    SELECT
+                        u.claimed_tokens
+                    FROM user u
+                    WHERE u.user_id = ?
+                """
+                res = cur.execute(query_check_claimed,(interaction.user.id,))
+                claimed_tokens = res.fetchone()[0]
+
+                if claimed_tokens != 0:
+                    await self.log_error(db, summary=f"{user_mention} tried to claim {self.tokens(self.monthly_tokens)} more than once this month.", user_id=interaction.user.id,cause_id=command_id)
+                    await self.send_response(interaction,content=f"You have already claimed your {self.tokens(self.monthly_tokens)} this month. Please wait until the end of the month to claim again.")                    
+                else:
+                    query_set_claimed = """
+                        UPDATE user
+                        SET claimed_tokens = 1
+                        WHERE user_id = ?
+                    """
+                    res = cur.execute(query_set_claimed,(interaction.user.id,))
+
+                    def claim_tokens_fun(previous):
+                        return previous + self.monthly_tokens
+
+                    (previous_tokens, new_tokens) = await self.update_tokens(db,interaction.user.id,claim_tokens_fun,cause_id=command_id)
+
+                    await self.send_response(interaction, f"You have claimed your monthly {self.tokens(self.monthly_tokens)}, and now have {self.tokens(new_tokens)} in total.")
+            except Exception as e:                
+                await self.log_system(db, f"UNCAUGHT EXCEPTION! - {str(e)}")
+            
+            db.close()
+
+        @self.tree.command(description=f"Gift some of your {self.tokens(-1)} to another user.")
+        @app_commands.describe(user=f"User to gift {self.tokens(-1)} to.", tokens=f"Number of {self.tokens(-1)} to gift.")
+        async def gifttokens(interaction: discord.Interaction, user: discord.Member, tokens: int):
+            await self.defer(interaction)
+            
+            db = self.db_connect()
+
+            try:
+                user_mention = self.mention_user(interaction.user.id)
+                target_user_mention = self.mention_user(user.id)
+                command_id = await self.log_command(db,f"{user_mention} gifted {self.tokens(tokens)} to {target_user_mention}.",interaction.user.id)
+
+                check_user(db,interaction.user.id)
+                check_user(db,user.id)
+
+                if user.id == interaction.user.id:
+                    await self.log_error(db, summary=f"{user_mention} tried to gift {self.tokens(tokens)} to themselves.", user_id=interaction.user.id,cause_id=command_id)
+                    await self.send_response(interaction,f"You cannot gift {self.tokens(-1)} to yourself!")
+                    db.close()
+                    return
+                cur = db.cursor()
+
+                if tokens <= 0:
+                    await self.log_error(db, summary=f"{user_mention} tried to gift {self.tokens(0)}.", user_id=interaction.user.id,cause_id=command_id)
+                    await self.send_response(interaction,f"Please introduce a positive amount of {self.tokens(-1)} to gift.")
+                    db.close()
+                    return
+
+                query_available_tokens = """
+                    SELECT
+                        u.tokens
+                    FROM user u
+                    WHERE u.user_id = ?
+                """
+                res = cur.execute(query_available_tokens,(interaction.user.id,))
+                available_tokens = res.fetchone()[0]
+
+                if available_tokens < tokens:
+                    await self.log_error(db, summary=f"{user_mention} tried to gift {self.tokens(tokens)} to {target_user_mention} but they only had {self.tokens(available_tokens)} available.", user_id=interaction.user.id,cause_id=command_id)
+                    await self.send_response(interaction,content=f"You only have {self.tokens(available_tokens)}.")                    
+                    db.close()
+                    return
+                
+                def reduce_tokens_fun(previous):
+                    return previous - tokens
+
+                def increase_tokens_fun(previous):
+                    return previous + tokens
+
+                (previous_self_tokens, new_self_tokens) = await self.update_tokens(db,interaction.user.id,reduce_tokens_fun,cause_id=command_id)
+                (previous_other_tokens, new_other_tokens) = await self.update_tokens(db,user.id,increase_tokens_fun,cause_id=command_id)
+
+                await self.send_response(interaction, f"You gifted {self.tokens(tokens)} to {target_user_mention}, and now have {self.tokens(new_self_tokens)} left. Very kind of you!")
+            except Exception as e:                
+                await self.log_system(db, f"UNCAUGHT EXCEPTION! - {str(e)}")
+            
+            db.close()
+
+        @self.tree.command(description=f"Check how many {self.tokens(-1)} you have.")
+        async def checktokens(interaction: discord.Interaction):
+            await self.defer(interaction)
+            
+            db = self.db_connect()
+
+            try:
+                user_mention = self.mention_user(interaction.user.id)
+                command_id = await self.log_command(db,f"{user_mention} checked their {self.tokens(-1)}",interaction.user.id)
+
+                check_user(db,interaction.user.id)
+
+                cur = db.cursor()
+
+                query_check_tokens = """
+                    SELECT
+                        u.tokens,
+                        u.claimed_tokens
+                    FROM user u
+                    WHERE u.user_id = ?
+                """
+                res = cur.execute(query_check_tokens,(interaction.user.id,))
+                (tokens,claimed) = res.fetchone()
+                
+                if claimed != 0:
+                    await self.send_response(interaction, f"You have {self.tokens(tokens)}.")
+                else:
+                    await self.send_response(interaction, f"You have {self.tokens(tokens)}, but you can claim your monthly {self.tokens(self.monthly_tokens)} by using /claimtokens.")
+            except Exception as e:                
+                await self.log_system(db, f"UNCAUGHT EXCEPTION! - {str(e)}")
+            
+            db.close()
+
+        @self.tree.command(description=f"Check how many {self.penalties(-1)} you have.")
+        async def checkpenalties(interaction: discord.Interaction):
+            await self.defer(interaction)
+            
+            db = self.db_connect()
+
+            try:
+                user_mention = self.mention_user(interaction.user.id)
+                command_id = await self.log_command(db,f"{user_mention} checked their {self.penalties(-1)}",interaction.user.id)
+
+                check_user(db,interaction.user.id)
+
+                cur = db.cursor()
+
+                query_check_penalties = """
+                    SELECT
+                        u.penalties
+                    FROM user u
+                    WHERE u.user_id = ?
+                """
+                res = cur.execute(query_check_penalties,(interaction.user.id,))
+                penalties = res.fetchone()[0]
+                
+                await self.send_response(interaction, f"You have {self.penalties(penalties)}.")                
+            except Exception as e:                
+                await self.log_system(db, f"UNCAUGHT EXCEPTION! - {str(e)}")
+            
+            db.close()
+
+        ###
+        # Trusted critics
+        ###
+        
+        @self.tree.command(description=f"(Trusted critics only) Reward {self.tokens(-1)} to a user for good participation in the guild.")
+        @app_commands.describe(user=f"User to reward {self.tokens(-1)} to.", tokens=f"Number of {self.tokens(-1)} to reward.", reason=f"Justification for the reward.")
+        async def rewardtokens(interaction: discord.Interaction, user: discord.Member, tokens: int, reason: str):
+            await self.defer(interaction)
+            
+            db = self.db_connect()            
+
+            try:
+                user_mention = self.mention_user(interaction.user.id)
+                target_user_mention = self.mention_user(user.id)
+                command_id = await self.log_command(db,f"{user_mention} rewarded {target_user_mention} {self.tokens(tokens)} with reason: {reason}.",interaction.user.id)
+
+                if not check_user(db,user.id,create=False):
+                    await self.log_error(db, summary=f"{target_user_mention} cannot be rewarded {self.tokens(-1)} because they have never interacted with the bot before.", user_id=interaction.user.id,cause_id=command_id)
+                    await self.send_response(interaction, f"{target_user_mention} cannot be rewarded {self.tokens(-1)} because they have never interacted with the bot before. This is an intentional limitation. Please do not reward users unless they have participated in the guild before.")
+                    db.close()
+                    return
+
+                if not self.check_trusted_critic(db, interaction, command_name="/rewardtokens", cause_id = command_id):
+                    db.close()
+                    return
+
+                if tokens <= 0:
+                    await self.log_error(db, summary=f"{user_mention} tried to reward {self.tokens(0)}.", user_id=interaction.user.id,cause_id=command_id)
+                    await self.send_response(interaction,f"Please introduce a positive amount of {self.tokens(-1)} to reward.")
+                    db.close()
+                    return                
+                                
+                def increase_tokens_fun(previous):
+                    return previous + tokens
+
+                (previous_tokens, new_tokens) = await self.update_tokens(db,user.id,increase_tokens_fun,cause_id=command_id)
+
+                await self.send_response(interaction, f"You rewarded {target_user_mention} {self.tokens(tokens)}.")
+                await self.send_dm(user, f"A trusted critic rewarded you {self.tokens(tokens)} and you now have {self.tokens(new_tokens)} in total. Reason: {reason}")
+            except Exception as e:                
+                await self.log_system(db, f"UNCAUGHT EXCEPTION! - {str(e)}")
+            
+            db.close()
+
+        @self.tree.command(description=f"(Trusted critics only) Reward {self.stars(1)} to a user for giving good mapping feedback.")
+        @app_commands.describe(user=f"User to reward {self.stars(1)} to.", reason=f"Justification for the reward.")
+        async def rewardstar(interaction: discord.Interaction, user: discord.Member, reason: str):
+            await self.defer(interaction)
+            
+            db = self.db_connect()            
+
+            try:
+                user_mention = self.mention_user(interaction.user.id)
+                target_user_mention = self.mention_user(user.id)
+                command_id = await self.log_command(db,f"{user_mention} rewarded {target_user_mention} {self.stars(1)} with reason: {reason}.",interaction.user.id)
+
+                if not check_user(db,user.id,create=False):
+                    await self.log_error(db, summary=f"{target_user_mention} cannot be rewarded {self.stars(1)} because they have never interacted with the bot before.", user_id=interaction.user.id,cause_id=command_id)
+                    await self.send_response(interaction, f"{target_user_mention} cannot be rewarded {self.stars(1)} because they have never interacted with the bot before. This is an intentional limitation. Please do not reward users unless they have participated in the guild before.")
+                    db.close()
+                    return
+
+                if not self.check_trusted_critic(db, interaction, command_name="/rewardstar", cause_id = command_id):
+                    db.close()
+                    return                
+                                
+                def increase_stars_fun(previous):
+                    return previous + 1
+
+                (previous_stars, new_stars) = await self.update_stars(db,user.id,increase_stars_fun,cause_id=command_id)
+
+                await self.send_response(interaction, f"You rewarded {target_user_mention} {self.stars(1)}.")                
+            except Exception as e:                
+                await self.log_system(db, f"UNCAUGHT EXCEPTION! - {str(e)}")
+            
+            db.close()
+
+        ###
         # Admin
         ###
+
+        @self.tree.command(description="(Admin only) Check if the butler is online.")
+        @app_commands.default_permissions(administrator=True)
+        @app_commands.checks.has_permissions(administrator=True)
+        async def ping(interaction: discord.Interaction):
+            await self.defer(interaction)
+            await self.send_response(interaction,"Pong.")
 
         @self.tree.command(description="(Admin only) Make the butler go offline.")
         @app_commands.default_permissions(administrator=True)
@@ -253,10 +676,10 @@ class CriticsGuildButler(discord.Client):
             except Exception as e:
                 await self.log_system(db, f"UNCAUGHT EXCEPTION! - {str(e)}")
 
-        @self.tree.command(description="(Admin only) Check user status")
+        @self.tree.command(description="(Admin only) Check user status.")
         @app_commands.default_permissions(administrator=True)
         @app_commands.checks.has_permissions(administrator=True)
-        @app_commands.describe(user="User to check status")
+        @app_commands.describe(user="User to check status.")
         async def checkuser(interaction: discord.Interaction, user: discord.Member):
             await self.defer(interaction)
             if not await self.check_admin_channel(interaction):                    
@@ -366,11 +789,11 @@ class CriticsGuildButler(discord.Client):
             
             db.close()
 
-        @self.tree.command(description="(Admin only) Check user log")
+        @self.tree.command(description="(Admin only) Check user log.")
         @app_commands.default_permissions(administrator=True)
         @app_commands.checks.has_permissions(administrator=True)
-        @app_commands.describe(user="User to check log", days="Number of past days to check the log for", max_messages="Maximum number of log messages to print", commands="Include commands", results="Include results", errors="Include errors")
-        async def checkuserlog(interaction: discord.Interaction, user: discord.Member, days:int = 1, max_messages:int = 10, commands:bool = True, results:bool = True, errors:bool = True):
+        @app_commands.describe(user="User to check log.", days="Number of past days to check the log for.", max_messages="Maximum number of log messages to print.", with_tree="Include causal tree of command (causes and effects).", commands="Include commands.", results="Include results.", errors="Include errors.")
+        async def checkuserlog(interaction: discord.Interaction, user: discord.Member, days:int = 1, max_messages:int = 10, with_tree:bool = False, commands:bool = True, results:bool = True, errors:bool = True):
             await self.defer(interaction)
             if not await self.check_admin_channel(interaction):                    
                 return
@@ -380,7 +803,7 @@ class CriticsGuildButler(discord.Client):
             try:
                 user_mention = self.mention_user(interaction.user.id)
                 target_user_mention = self.mention_user(user.id)
-                command_id = await self.log_command(db,f"{user_mention} checked the log for {target_user_mention}.",interaction.user.id)
+                command_id = await self.log_command(db,f"{user_mention} checked the log for {target_user_mention} (past {days} days, maximum of {max_messages} entries).",interaction.user.id)
 
                 check_user(db,user.id)
 
@@ -392,6 +815,7 @@ class CriticsGuildButler(discord.Client):
                         l.request_id,
                         datetime(l.timestamp),
                         l.class,
+                        l.cause_id,
                         l.summary
                     FROM log l
                     WHERE
@@ -409,25 +833,292 @@ class CriticsGuildButler(discord.Client):
                 logs = res.fetchall()
                 logs.reverse()
 
-                async def log_message(log):
-                    (log_id, request_id, date_str, log_class_id, summary) = log
+                async def log_message(log,with_cause=with_tree,with_consequences=with_tree,prefix=""):
+                    (log_id, request_id, date_str, log_class_id, cause_id, summary) = log
                     log_class = LogClass(log_class_id)                    
 
-                    message = f"{self.get_class_icon(log_class)}{log_class.name}/{log_id} ({date_str}) - {summary}"
+                    message = f"{prefix}{self.get_class_icon(log_class)}{log_class.name}/{log_id} ({date_str}) - {summary}"
 
                     if not request_id is None:
                         thread_str = await self.display_request(request_id)
                         message += f" (on {thread_str})"
 
-                    return message
+                    await self.send_admin_channel(message)
+
+                    if with_cause:
+                        query_cause = """
+                            SELECT
+                                l.log_id,
+                                l.request_id,
+                                datetime(l.timestamp),
+                                l.class,
+                                l.cause_id,
+                                l.summary
+                            FROM log l
+                            WHERE
+                                l.log_id = ?
+                            """
+                        res = cur.execute(query_cause,(cause_id,))
+                        log = res.fetchone()
+
+                        if log:
+                            await log_message(log,with_cause=True,with_consequences=False,prefix="caused by ")
+
+                    if with_consequences:
+                        query_consequences = """
+                            SELECT
+                                l.log_id,
+                                l.request_id,
+                                datetime(l.timestamp),
+                                l.class,
+                                l.cause_id,
+                                l.summary
+                            FROM log l
+                            WHERE
+                                l.cause_id = ?
+                            """
+                        res = cur.execute(query_consequences,(log_id,))
+                        logs = res.fetchall()
+
+                        for log in logs:
+                            await log_message(log,with_cause=False,with_consequences=True,prefix="with consequence ")
                                 
                 for log in logs:
-                    result = await log_message(log)
-                    await self.send_admin_channel(result)
+                    await log_message(log)                    
 
                 await self.send_response(interaction, "Command complete.")
             except Exception as e:                
                 await self.log_system(db, f"UNCAUGHT EXCEPTION! - {str(e)}")
             
             db.close()
-        
+
+        @self.tree.command(description="(Admin only) Check system log.")
+        @app_commands.default_permissions(administrator=True)
+        @app_commands.checks.has_permissions(administrator=True)
+        @app_commands.describe(days="Number of past days to check the log for.", max_messages="Maximum number of log messages to print.", with_tree="Include causal tree of command (causes and effects).")
+        async def checksystemlog(interaction: discord.Interaction, days:int = 1, max_messages:int = 10, with_tree:bool = True):
+            await self.defer(interaction)
+            if not await self.check_admin_channel(interaction):                    
+                return
+
+            db = self.db_connect()
+
+            try:
+                user_mention = self.mention_user(interaction.user.id)
+                command_id = await self.log_command(db,f"{user_mention} checked the system log (past {days} days, maximum of {max_messages} entries).",interaction.user.id)
+                
+                cur = db.cursor()
+
+                query = """
+                    SELECT
+                        l.log_id,
+                        l.request_id,
+                        datetime(l.timestamp),
+                        l.class,
+                        l.cause_id,
+                        l.summary
+                    FROM log l
+                    WHERE
+                        (julianday('now') - julianday(l.timestamp)) < :days
+                        AND l.class = :system_class
+                    ORDER BY l.timestamp DESC
+                    LIMIT :max_messages
+                    """
+                data = {"days": days, "system_class":LogClass.SYSTEM.value, "max_messages":max_messages}
+                res = cur.execute(query,data)
+                logs = res.fetchall()
+                logs.reverse()
+
+                async def log_message(log,with_cause=with_tree,with_consequences=with_tree,prefix=""):
+                    (log_id, request_id, date_str, log_class_id, cause_id, summary) = log
+                    log_class = LogClass(log_class_id)                    
+
+                    message = f"{prefix}{self.get_class_icon(log_class)}{log_class.name}/{log_id} ({date_str}) - {summary}"
+
+                    if not request_id is None:
+                        thread_str = await self.display_request(request_id)
+                        message += f" (on {thread_str})"
+
+                    await self.send_admin_channel(message)
+
+                    if with_cause:
+                        query_cause = """
+                            SELECT
+                                l.log_id,
+                                l.request_id,
+                                datetime(l.timestamp),
+                                l.class,
+                                l.cause_id,
+                                l.summary
+                            FROM log l
+                            WHERE
+                                l.log_id = ?
+                            """
+                        res = cur.execute(query_cause,(cause_id,))
+                        log = res.fetchone()
+
+                        if log:
+                            await log_message(log,with_cause=True,with_consequences=False,prefix="caused by ")
+
+                    if with_consequences:
+                        query_consequences = """
+                            SELECT
+                                l.log_id,
+                                l.request_id,
+                                datetime(l.timestamp),
+                                l.class,
+                                l.cause_id,
+                                l.summary
+                            FROM log l
+                            WHERE
+                                l.cause_id = ?
+                            """
+                        res = cur.execute(query_consequences,(log_id,))
+                        logs = res.fetchall()
+
+                        for log in logs:
+                            await log_message(log,with_cause=False,with_consequences=True,prefix="with consequence ")
+                                
+                for log in logs:
+                    await log_message(log)                    
+
+                await self.send_response(interaction, "Command complete.")
+            except Exception as e:                
+                await self.log_system(db, f"UNCAUGHT EXCEPTION! - {str(e)}")
+            
+            db.close()
+
+        @self.tree.command(description=f"(Admin only) Set {self.tokens(-1)} count of user.")
+        @app_commands.default_permissions(administrator=True)
+        @app_commands.checks.has_permissions(administrator=True)
+        @app_commands.describe(user=f"User to set {self.tokens(-1)} for.", tokens=f"New number of {self.tokens(-1)}.", reason=f"Justification.")
+        async def settokens(interaction: discord.Interaction, user: discord.Member, tokens: int, reason: str):
+            await self.defer(interaction)
+            
+            db = self.db_connect()
+
+            try:
+                user_mention = self.mention_user(interaction.user.id)
+                target_user_mention = self.mention_user(user.id)
+                command_id = await self.log_command(db,f"{user_mention} set {target_user_mention} to {self.tokens(tokens)} with reason: {reason}.",interaction.user.id)
+
+                check_user(db,user.id)
+
+                def set_tokens_fun(previous):
+                    return tokens
+
+                (previous_tokens, new_tokens) = await self.update_tokens(db,user.id,set_tokens_fun,cause_id=command_id)
+
+                await self.send_response(interaction, f"Tokens for {target_user_mention} set from {self.tokens(previous_tokens)} to {self.tokens(new_tokens)}.")
+            except Exception as e:                
+                await self.log_system(db, f"UNCAUGHT EXCEPTION! - {str(e)}")
+            
+            db.close()
+
+        @self.tree.command(description=f"(Admin only) Set {self.stars(-1)} count of user.")
+        @app_commands.default_permissions(administrator=True)
+        @app_commands.checks.has_permissions(administrator=True)
+        @app_commands.describe(user=f"User to set {self.stars(-1)} for.", stars=f"New number of {self.stars(-1)}.", reason=f"Justification.")
+        async def setstars(interaction: discord.Interaction, user: discord.Member, stars: int, reason: str):
+            await self.defer(interaction)
+            
+            db = self.db_connect()
+
+            try:
+                user_mention = self.mention_user(interaction.user.id)
+                target_user_mention = self.mention_user(user.id)
+                command_id = await self.log_command(db,f"{user_mention} set {target_user_mention} to {self.stars(stars)} with reason: {reason}.",interaction.user.id)
+
+                check_user(db,user.id)
+
+                def set_stars_fun(previous):
+                    return stars
+
+                (previous_stars, new_stars) = await self.update_stars(db,user.id,set_stars_fun,cause_id=command_id)
+
+                await self.send_response(interaction, f"Stars for {target_user_mention} set from {self.stars(previous_stars)} to {self.stars(new_stars)}.")
+            except Exception as e:                
+                await self.log_system(db, f"UNCAUGHT EXCEPTION! - {str(e)}")
+            
+            db.close()
+
+        @self.tree.command(description=f"(Admin only) Set {self.upvotes(-1)} count of mapper.")
+        @app_commands.default_permissions(administrator=True)
+        @app_commands.checks.has_permissions(administrator=True)
+        @app_commands.describe(user=f"Mapper to set {self.upvotes(-1)} for.", upvotes=f"New number of {self.upvotes(-1)}.", reason=f"Justification.")
+        async def setmapperupvotes(interaction: discord.Interaction, user: discord.Member, upvotes: int, reason: str):
+            await self.defer(interaction)
+            
+            db = self.db_connect()
+
+            try:
+                user_mention = self.mention_user(interaction.user.id)
+                target_user_mention = self.mention_user(user.id)
+                command_id = await self.log_command(db,f"{user_mention} set {target_user_mention} to {self.upvotes(upvotes)} (mapper) with reason: {reason}.",interaction.user.id)
+
+                check_user(db,user.id)
+
+                def set_upvotes_fun(previous):
+                    return upvotes
+
+                (previous_upvotes, new_upvotes) = await self.update_mapper_upvotes(db,user.id,set_upvotes_fun,cause_id=command_id)
+
+                await self.send_response(interaction, f"Mapper upvotes for {target_user_mention} set from {self.upvotes(previous_upvotes)} to {self.upvotes(new_upvotes)}.")
+            except Exception as e:                
+                await self.log_system(db, f"UNCAUGHT EXCEPTION! - {str(e)}")
+            
+            db.close()
+
+        @self.tree.command(description=f"(Admin only) Set {self.upvotes(-1)} count of critic.")
+        @app_commands.default_permissions(administrator=True)
+        @app_commands.checks.has_permissions(administrator=True)
+        @app_commands.describe(user=f"Critic to set {self.upvotes(-1)} for.", upvotes=f"New number of {self.upvotes(-1)}.", reason="Justification.")
+        async def setcriticupvotes(interaction: discord.Interaction, user: discord.Member, upvotes: int, reason: str):
+            await self.defer(interaction)
+            
+            db = self.db_connect()
+
+            try:
+                user_mention = self.mention_user(interaction.user.id)
+                target_user_mention = self.mention_user(user.id)
+                command_id = await self.log_command(db,f"{user_mention} set {target_user_mention} to {self.upvotes(upvotes)} (critic) with reason: {reason}.",interaction.user.id)
+
+                check_user(db,user.id)
+
+                def set_upvotes_fun(previous):
+                    return upvotes
+
+                (previous_upvotes, new_upvotes) = await self.update_critic_upvotes(db,user.id,set_upvotes_fun,cause_id=command_id)
+
+                await self.send_response(interaction, f"Critic upvotes for {target_user_mention} set from {self.upvotes(previous_upvotes)} to {self.upvotes(new_upvotes)}.")
+            except Exception as e:                
+                await self.log_system(db, f"UNCAUGHT EXCEPTION! - {str(e)}")
+            
+            db.close()   
+            
+        @self.tree.command(description=f"(Admin only) Set {self.penalties(-1)} count of user.")
+        @app_commands.default_permissions(administrator=True)
+        @app_commands.checks.has_permissions(administrator=True)
+        @app_commands.describe(user=f"User to set {self.penalties(-1)} for.", penalties=f"New number of {self.penalties(-1)}.", reason="Justification.")
+        async def setpenalties(interaction: discord.Interaction, user: discord.Member, penalties: int, reason: str):
+            await self.defer(interaction)
+            
+            db = self.db_connect()
+
+            try:
+                user_mention = self.mention_user(interaction.user.id)
+                target_user_mention = self.mention_user(user.id)
+                command_id = await self.log_command(db,f"{user_mention} set {target_user_mention} to {self.penalties(penalties)} with reason: {reason}.",interaction.user.id)
+
+                check_user(db,user.id)
+
+                def set_penalties_fun(previous):
+                    return penalties
+
+                (previous_penalties, new_penalties) = await self.update_penalties(db,user.id,set_penalties_fun,cause_id=command_id)
+
+                await self.send_response(interaction, f"Penalties for {target_user_mention} set from {self.penalties(previous_penalties)} to {self.penalties(new_penalties)}.")
+            except Exception as e:                
+                await self.log_system(db, f"UNCAUGHT EXCEPTION! - {str(e)}")
+            
+            db.close()
