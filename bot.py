@@ -1,4 +1,5 @@
 ﻿from http import server
+from re import A
 import discord
 import datetime
 import asyncio
@@ -23,10 +24,16 @@ class RequestState(Enum):
     COMPLETED = 3
     CANCELLED = 4
 
+class RequestList(Enum):
+    OPEN = 1
+    CRITIC = 2
+    TRUSTED_CRITIC = 3
+
 class CriticsGuildButler(discord.Client):   
-    def __init__(self, *, db_connect, server_ids, bot_id, log_channel_id, trusted_critic_role_id, monthly_tokens, print_log=True):      
+    def __init__(self, *, db_connect, server_ids, bot_id, log_channel_id, trusted_critic_role_id, open_list_channel_id, critic_list_channel_id, trusted_critic_list_channel_id, monthly_tokens, max_requests, max_penalties, print_log=True):      
         intents = discord.Intents.default()
         intents.message_content = True
+        intents.guilds = True
 
         self.db_connect = db_connect
 
@@ -34,8 +41,13 @@ class CriticsGuildButler(discord.Client):
         self.bot_id = bot_id
         self.log_channel_id = log_channel_id
         self.trusted_critic_role_id = trusted_critic_role_id
+        self.open_list_channel_id = open_list_channel_id
+        self.critic_list_channel_id = critic_list_channel_id
+        self.trusted_critic_list_channel_id = trusted_critic_list_channel_id
 
         self.monthly_tokens = monthly_tokens
+        self.max_requests = max_requests
+        self.max_penalties = max_penalties
 
         self.print_log = print_log
 
@@ -69,6 +81,9 @@ class CriticsGuildButler(discord.Client):
 
         return
 
+    async def on_thread_create(self, thread: discord.Thread):
+        
+
     ###
     # Logic and presentation synchronous functions
     ###
@@ -86,7 +101,7 @@ class CriticsGuildButler(discord.Client):
         return ""
 
     def mention_user(self, user_id):
-        return f"<@{user_id}>"
+        return f"<@{user_id}>"    
 
     # Use a negative number to show just the icon.
     def tokens(self, n):
@@ -303,7 +318,25 @@ class CriticsGuildButler(discord.Client):
         await self.log_penalties(db, user_id, previous_penalties, new_penalties, request_id, cause_id, **kwargs)
 
         return (previous_penalties,new_penalties)    
-    
+
+    async def create_request(self, db, thread: discord.Thread):
+        thread_id = thread.id
+        author_id = thread.owner_id
+
+        if thread.parent_id == self.open_list_channel_id:
+            list_option = RequestList.OPEN
+        elif thread.parent_id == self.critic_list_channel_id:
+            list_option = RequestList.CRITIC
+        elif thread.parent_id == self.trusted_critic_list_channel_id:
+            list_option = RequestList.TRUSTED_CRITIC
+        else:
+            await self.log_system(db, f"Unexpected forum thread encountered when creating new request: {thread.parent_id}")
+
+        # We assume there is exactly one tag. Do not call this function unless this is checked
+        tag = thread.applied_tags[0]
+
+        # TODO: Define types, check tags, define type.
+
     ###
     # Interaction support methods
     ###
@@ -426,6 +459,72 @@ class CriticsGuildButler(discord.Client):
     async def log_penalties(self, db, user_id, previous_penalties, new_penalties, request_id=None, cause_id=None, **kwargs):
         user_mention = self.mention_user(user_id)
         return await self.log_result(db,f"{user_mention} went from {self.penalties(previous_penalties)} to {self.penalties(new_penalties)}.",user_id,request_id,cause_id,**kwargs)
+
+    ###
+    # Reactions to events
+    ###
+    async def newopenrequest(self, thread: discord.Thread):
+        db = self.db.connect()
+
+        try:
+            user_mention = self.mention_user(thread.owner_id)
+            command_id = await self.log_command(db,f"{user_mention} created request {thread.jump_url} in the open list.")
+
+            check_user(db,thread.owner_id)
+
+            cur = db.cursor()
+
+            # Check exactly one tag
+            n_tags = len(thread.applied_tags)
+            if n_tags != 1:
+                await self.log_error(db,f"{user_mention} tried to create a new request with {n_tags} tags applied to it.",cause_id=command_id)
+                self.send_dm(thread.owner_id,f"Your request was deleted because it had {n_tags} applied to it. Requests must have exactly 1 tag to be valid, indicating the type of request they are.")
+                db.close()
+                return
+
+            # No token requirement
+
+            # Check number of penalties
+            query_penalties = """
+                SELECT u.penalties
+                FROM user u
+                WHERE u.user_id = ?
+                """
+            res = cur.execute(query_penalties,(thread.owner_id,))
+            penalties = res.fetchone()[0]
+
+            if penalties >= self.max_penalties:
+                await self.log_error(db,f"{user_mention} tried to create a new request but they have {self.penalties(penalties)}",cause_id=command_id)
+                self.send_dm(thread.owner_id,f"Your request was deleted because you have {self.penalties(penalties)}. You are not allowed to create requests with these many penalties. If you would like to have penalties removed, contact Staff to understand the reason you received them.")
+                db.close()
+                return
+
+            # Check number of active requests
+            query_active = """
+                SELECT
+                    COUNT(*)
+                FROM request r
+                WHERE r.author_id = :user_id
+                    AND r.state IN (:open_state,:claimed_state)
+                """
+            data = {"user_id":thread.owner_id, "open_state":RequestState.OPEN.value,"claimed_state":RequestState.CLAIMED.value}
+            res = cur.execute(query_active,data)
+            requests = res.fetchone()[0]
+            
+            if requests >= self.max_requests:
+                await self.log_error(db,f"{user_mention} tried to create a new request but they already have {requests} open.",cause_id=command_id)
+                self.send_dm(thread.owner_id,f"Your request was deleted because you already have {requests} open. You may not have more than {self.max_requests} open at any one time (across all lists). Please wait until one of your requests is completed or cancel an unclaimed request.")
+                db.close()
+                return    
+
+            # Create the request
+
+            # Make a post in the request with basic info.
+
+        except Exception as e:                
+            await self.log_system(db, f"UNCAUGHT EXCEPTION! - {str(e)}")
+            
+        db.close()
 
     ###
     # Slash Commands
