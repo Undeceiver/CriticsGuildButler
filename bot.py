@@ -45,8 +45,10 @@ class RequestType(Enum):
 class CriticsGuildButler(discord.Client):   
     def __init__(self, *, db_connect, 
                  server_ids, bot_id, 
-                 log_channel_id, trusted_critic_role_id, 
-                 open_list_channel_id, open_list_tag_ids, critic_list_channel_id, critic_list_tag_ids, trusted_critic_list_channel_id, trusted_critic_list_tag_ids, 
+                 log_channel_id, critic_role_id, trusted_critic_role_id, 
+                 open_list_channel_id, open_list_tag_ids, 
+                 critic_list_channel_id, critic_list_tag_ids, critic_list_token_costs, critic_list_token_rewards,
+                 trusted_critic_list_channel_id, trusted_critic_list_tag_ids, trusted_critic_list_token_costs, trusted_critic_list_token_rewards,
                  monthly_tokens, max_requests, max_penalties, 
                  print_log=True):      
         intents = discord.Intents.default()
@@ -58,13 +60,18 @@ class CriticsGuildButler(discord.Client):
         self.server_ids = server_ids
         self.bot_id = bot_id
         self.log_channel_id = log_channel_id
+        self.critic_role_id = critic_role_id
         self.trusted_critic_role_id = trusted_critic_role_id
         self.open_list_channel_id = open_list_channel_id
         self.open_list_tag_ids = open_list_tag_ids
         self.critic_list_channel_id = critic_list_channel_id
         self.critic_list_tag_ids = critic_list_tag_ids
+        self.critic_list_token_costs = critic_list_token_costs
+        self.critic_list_token_rewards = critic_list_token_rewards
         self.trusted_critic_list_channel_id = trusted_critic_list_channel_id
         self.trusted_critic_list_tag_ids = trusted_critic_list_tag_ids
+        self.trusted_critic_list_token_costs = trusted_critic_list_token_costs
+        self.trusted_critic_list_token_rewards = trusted_critic_list_token_rewards
 
         self.monthly_tokens = monthly_tokens
         self.max_requests = max_requests
@@ -103,8 +110,8 @@ class CriticsGuildButler(discord.Client):
         return
 
     async def on_thread_create(self, thread: discord.Thread):
-        if thread.parent_id == self.open_list_channel_id:
-            await self.newopenrequest(thread)
+        await self.process_thread(thread)
+
     ###
     # Logic and presentation synchronous functions
     ###
@@ -340,11 +347,8 @@ class CriticsGuildButler(discord.Client):
 
         return (previous_penalties,new_penalties)    
 
-    async def create_request(self, db, thread: discord.Thread, cause_id=None):
-        thread_id = thread.id
-        author_id = thread.owner_id
-
-        # We assume there is exactly one tag. Do not call this function unless this is checked
+    async def get_request_type(self, db, thread: discord.Thread):
+        # We assume there is exactly one tag. Do not call this function unless this is checked        
         tag = thread.applied_tags[0]      
         request_type = None
         if thread.parent_id == self.open_list_channel_id:
@@ -369,6 +373,19 @@ class CriticsGuildButler(discord.Client):
         if request_type is None:
             await self.log_system(db, f"Unexpected request type encountered on {list_option}: {tag.id} with label {tag.name}.",cause_id=cause_id)
             return None
+        
+        return (list_option,request_type)
+
+    async def create_request(self, db, thread: discord.Thread, cause_id=None):
+        thread_id = thread.id
+        author_id = thread.owner_id
+        
+        type_and_list = await self.get_request_type(db, thread)
+
+        if type_and_list is None:
+            return None
+
+        (list_option, request_type) = type_and_list
 
         cur = db.cursor()
 
@@ -385,6 +402,14 @@ class CriticsGuildButler(discord.Client):
         await self.log_result(db,f"{user_mention} created request {thread.jump_url} of {request_type} in {list_option}.",thread.owner_id,request_id=thread_id,cause_id=cause_id)
 
         return thread_id
+
+    async def process_thread(self, thread: discord.Thread):
+        if thread.parent_id == self.open_list_channel_id:
+            await self.newopenrequest(thread)
+        elif thread.parent_id == self.critic_list_channel_id:
+            await self.newcriticrequest(thread)
+        elif thread.parent_id == self.trusted_critic_list_channel_id:
+            await self.newtrustedcriticrequest(thread)
 
     ###
     # Interaction support methods
@@ -433,6 +458,15 @@ class CriticsGuildButler(discord.Client):
     async def send_admin_channel(self, content = None, embeds = None, mentions = False, **kwargs):
         return await self.send_channel(self.log_channel_obj, content, embeds, mentions, **kwargs)    
     
+    async def check_critic(self, db, interaction: discord.Interaction, command_name, request_id = None, cause_id = None, **kwargs):
+        if not any((role.id == self.trusted_critic_role_id or role.id == self.critic_role_id) for role in interaction.user.roles):
+            user_mention = self.mention_user(interaction.user.id)
+            await self.log_error(db, f"{user_mention} tried to run {command_name} but they are not a critic.",user_id=interaction.user.id, request_id=request_id, cause_id=cause_id, **kwargs)
+            await self.send_response(interaction, "Only critics can use this command.")
+            return False
+        else:
+            return True
+
     async def check_trusted_critic(self, db, interaction: discord.Interaction, command_name, request_id = None, cause_id = None, **kwargs):
         if not any(role.id == self.trusted_critic_role_id for role in interaction.user.roles):
             user_mention = self.mention_user(interaction.user.id)
@@ -475,6 +509,7 @@ class CriticsGuildButler(discord.Client):
                 return False
 
         return True
+        
     ###
     # Logging
     ###
@@ -620,6 +655,202 @@ class CriticsGuildButler(discord.Client):
             # Make a post in the request with basic info.
             await self.send_thread(thread, f"✅The {thread.applied_tags[0].emoji.name}**{thread.applied_tags[0].name}** request has been registered. {user_mention} now has {requests+1}/{self.max_requests} active requests.",mentions=False)
             await self.send_thread(thread, f"Requests cannot be reserved in the open list, but anybody may express their interest in responding to this request.",mentions=False)
+            await self.send_thread(thread, f"❌{user_mention} may cancel the request if nobody has responded to it by using `/cancelrequest`.",mentions=False)
+            if not has_attachment:
+                await self.send_thread(thread,f"⚠️No attachment was detected on the original message. If this is a mistake, please remember to attach your map file now. Ignore if attachment isn't necessary.",mentions=False)
+
+        except Exception as e:                
+            await self.log_system(db, f"UNCAUGHT EXCEPTION! - {str(e)}")
+            
+        db.close()
+
+    async def newcriticrequest(self, thread: discord.Thread):
+        db = self.db_connect()
+
+        try:
+            user_mention = self.mention_user(thread.owner_id)
+            request_title = thread.name
+            command_id = await self.log_command(db,f"{user_mention} created request {thread.jump_url} in the critics list.",thread.owner_id)
+            
+            check_user(db,thread.owner_id)
+
+            cur = db.cursor()
+
+            # Check exactly one tag
+            n_tags = len(thread.applied_tags)
+            if n_tags != 1:
+                await self.log_error(db,f"{user_mention} tried to create a new request with {n_tags} tags applied to it.",thread.owner_id,cause_id=command_id)
+                user = await self.server_obj.fetch_member(thread.owner_id)
+                await self.send_dm(user,f"Your request \"{request_title}\" was deleted because it had {n_tags} tags applied to it. Requests must have exactly 1 tag to be valid, indicating the type of request they are.")
+                await thread.delete()
+                db.close()
+                return
+
+            # Check it has attachment - This is not a requirement but if it does not it is noted on the bot's message.
+            if not thread.last_message_id is None:
+                message = await thread.fetch_message(thread.last_message_id)
+                has_attachment = (len(message.attachments) > 0)
+            else:
+                await self.log_system(db,f"Couldn't fetch the last message on a thread.",cause_id=command_id)
+                has_attachment = True
+
+            # Check number of penalties         
+            query_tokens_penalties = """
+                SELECT u.tokens, u.penalties
+                FROM user u
+                WHERE u.user_id = ?
+                """
+            res = cur.execute(query_tokens_penalties,(thread.owner_id,))
+            (tokens,penalties) = res.fetchone()
+
+            if penalties >= self.max_penalties:
+                await self.log_error(db,f"{user_mention} tried to create a new request but they have {self.penalties(penalties)}",thread.owner_id,cause_id=command_id)
+                user = await self.server_obj.fetch_member(thread.owner_id)
+                await self.send_dm(user,f"Your request \"{request_title}\" was deleted because you have {self.penalties(penalties)}. You are not allowed to create requests with these many penalties. If you would like to have penalties removed, contact Staff to understand the reason you received them.")
+                await thread.delete()
+                db.close()
+                return
+
+            # Check number of active requests
+            query_active = """
+                SELECT
+                    COUNT(*)
+                FROM request r
+                WHERE r.author_id = :user_id
+                    AND r.state IN (:open_state,:claimed_state)
+                """
+            data = {"user_id":thread.owner_id, "open_state":RequestState.OPEN.value,"claimed_state":RequestState.CLAIMED.value}
+            res = cur.execute(query_active,data)
+            requests = res.fetchone()[0]
+            
+            if requests >= self.max_requests:
+                await self.log_error(db,f"{user_mention} tried to create a new request but they already have {requests} requests open.",thread.owner_id,cause_id=command_id)
+                user = await self.server_obj.fetch_member(thread.owner_id)
+                await self.send_dm(user,f"Your request \"{request_title}\" was deleted because you already have {requests} requests open. You may not have more than {self.max_requests} requests open at any one time (across all lists). Please wait until one of your requests is completed or cancel an unclaimed request.")
+                await thread.delete()
+                db.close()
+                return    
+
+            # Tokens
+            (list_option, request_type) = await self.get_request_type(db,thread)
+            # Here we assume this is the critics list.
+            token_cost = self.critic_list_token_costs[request_type.value - 1]
+            token_reward = self.critic_list_token_rewards[request_type.value - 1]
+            if tokens < token_cost:
+                await self.log_error(db,f"{user_mention} tried to create a new request of type {request_type} but they only have {self.tokens(tokens)} and require {self.tokens(token_cost)}",thread.owner_id,cause_id=command_id)
+                user = await self.server_obj.fetch_member(thread.owner_id)
+                await self.send_dm(user,f"Your request \"{request_title}\" was deleted because you only have {self.tokens(tokens)} and require {self.tokens(token_cost)} to create a request of this type in the critics list.")
+                await thread.delete()
+                db.close()
+                return
+            def token_update(previous):
+                return previous - token_cost
+            
+            # Create the request
+            thread_id = await self.create_request(db,thread,cause_id=command_id)
+            await self.update_tokens(db,thread.owner_id,token_update,request_id=thread_id,cause_id=command_id)
+            
+            # Make a post in the request with basic info.
+            await self.send_thread(thread, f"✅The {thread.applied_tags[0].emoji.name}**{thread.applied_tags[0].name}** request has been registered. {user_mention} consumed {self.tokens(token_cost)}. {user_mention} now has {requests+1}/{self.max_requests} active requests.",mentions=False)
+            await self.send_thread(thread, f"Only critics may respond to requests in this list. Critics interested in responding to this request should reserve it with `/reserverequest`. Responding to this request will reward {self.tokens(token_reward)}.",mentions=False)
+            await self.send_thread(thread, f"❌{user_mention} may cancel the request if nobody has responded to it by using `/cancelrequest`.",mentions=False)
+            if not has_attachment:
+                await self.send_thread(thread,f"⚠️No attachment was detected on the original message. If this is a mistake, please remember to attach your map file now. Ignore if attachment isn't necessary.",mentions=False)
+
+        except Exception as e:                
+            await self.log_system(db, f"UNCAUGHT EXCEPTION! - {str(e)}")
+            
+        db.close()
+
+    async def newtrustedcriticrequest(self, thread: discord.Thread):
+        db = self.db_connect()
+
+        try:
+            user_mention = self.mention_user(thread.owner_id)
+            request_title = thread.name
+            command_id = await self.log_command(db,f"{user_mention} created request {thread.jump_url} in the trusted critics list.",thread.owner_id)
+            
+            check_user(db,thread.owner_id)
+
+            cur = db.cursor()
+
+            # Check exactly one tag
+            n_tags = len(thread.applied_tags)
+            if n_tags != 1:
+                await self.log_error(db,f"{user_mention} tried to create a new request with {n_tags} tags applied to it.",thread.owner_id,cause_id=command_id)
+                user = await self.server_obj.fetch_member(thread.owner_id)
+                await self.send_dm(user,f"Your request \"{request_title}\" was deleted because it had {n_tags} tags applied to it. Requests must have exactly 1 tag to be valid, indicating the type of request they are.")
+                await thread.delete()
+                db.close()
+                return
+
+            # Check it has attachment - This is not a requirement but if it does not it is noted on the bot's message.
+            if not thread.last_message_id is None:
+                message = await thread.fetch_message(thread.last_message_id)
+                has_attachment = (len(message.attachments) > 0)
+            else:
+                await self.log_system(db,f"Couldn't fetch the last message on a thread.",cause_id=command_id)
+                has_attachment = True
+
+            # Check number of penalties         
+            query_tokens_penalties = """
+                SELECT u.tokens, u.penalties
+                FROM user u
+                WHERE u.user_id = ?
+                """
+            res = cur.execute(query_tokens_penalties,(thread.owner_id,))
+            (tokens,penalties) = res.fetchone()
+
+            if penalties >= self.max_penalties:
+                await self.log_error(db,f"{user_mention} tried to create a new request but they have {self.penalties(penalties)}",thread.owner_id,cause_id=command_id)
+                user = await self.server_obj.fetch_member(thread.owner_id)
+                await self.send_dm(user,f"Your request \"{request_title}\" was deleted because you have {self.penalties(penalties)}. You are not allowed to create requests with these many penalties. If you would like to have penalties removed, contact Staff to understand the reason you received them.")
+                await thread.delete()
+                db.close()
+                return
+
+            # Check number of active requests
+            query_active = """
+                SELECT
+                    COUNT(*)
+                FROM request r
+                WHERE r.author_id = :user_id
+                    AND r.state IN (:open_state,:claimed_state)
+                """
+            data = {"user_id":thread.owner_id, "open_state":RequestState.OPEN.value,"claimed_state":RequestState.CLAIMED.value}
+            res = cur.execute(query_active,data)
+            requests = res.fetchone()[0]
+            
+            if requests >= self.max_requests:
+                await self.log_error(db,f"{user_mention} tried to create a new request but they already have {requests} requests open.",thread.owner_id,cause_id=command_id)
+                user = await self.server_obj.fetch_member(thread.owner_id)
+                await self.send_dm(user,f"Your request \"{request_title}\" was deleted because you already have {requests} requests open. You may not have more than {self.max_requests} requests open at any one time (across all lists). Please wait until one of your requests is completed or cancel an unclaimed request.")
+                await thread.delete()
+                db.close()
+                return    
+
+            # Tokens
+            (list_option, request_type) = await self.get_request_type(db,thread)
+            # Here we assume this is the trusted critics list.
+            token_cost = self.trusted_critic_list_token_costs[request_type.value - 1]
+            token_reward = self.trusted_critic_list_token_rewards[request_type.value - 1]
+            if tokens < token_cost:
+                await self.log_error(db,f"{user_mention} tried to create a new request of type {request_type} but they only have {self.tokens(tokens)} and require {self.tokens(token_cost)}",thread.owner_id,cause_id=command_id)
+                user = await self.server_obj.fetch_member(thread.owner_id)
+                await self.send_dm(user,f"Your request \"{request_title}\" was deleted because you only have {self.tokens(tokens)} and require {self.tokens(token_cost)} to create a request of this type in the trusted critics list.")
+                await thread.delete()
+                db.close()
+                return
+            def token_update(previous):
+                return previous - token_cost
+            
+            # Create the request
+            thread_id = await self.create_request(db,thread,cause_id=command_id)
+            await self.update_tokens(db,thread.owner_id,token_update,request_id=thread_id,cause_id=command_id)
+            
+            # Make a post in the request with basic info.
+            await self.send_thread(thread, f"✅The {thread.applied_tags[0].emoji.name}**{thread.applied_tags[0].name}** request has been registered. {user_mention} consumed {self.tokens(token_cost)}. {user_mention} now has {requests+1}/{self.max_requests} active requests.",mentions=False)
+            await self.send_thread(thread, f"Only trusted critics may respond to requests in this list. Trusted critics interested in responding to this request should reserve it with `/reserverequest`. Responding to this request will reward {self.tokens(token_reward)}.",mentions=False)
             await self.send_thread(thread, f"❌{user_mention} may cancel the request if nobody has responded to it by using `/cancelrequest`.",mentions=False)
             if not has_attachment:
                 await self.send_thread(thread,f"⚠️No attachment was detected on the original message. If this is a mistake, please remember to attach your map file now. Ignore if attachment isn't necessary.",mentions=False)
@@ -809,9 +1040,15 @@ class CriticsGuildButler(discord.Client):
             db = self.db_connect()
 
             try:
-                user_mention = self.mention_user(interaction.user.id)
+                user_mention = self.mention_user(interaction.user.id)                
                 channel_obj = await self.server_obj.fetch_channel(interaction.channel_id)
                 command_id = await self.log_command(db,f"{user_mention} attempted to cancel {channel_obj.jump_url} with reason: {reason}.",interaction.user.id)
+
+                if not check_request(db,interaction.channel_id):
+                    await self.log_error(db,f"{user_mention} tried to cancel the request {channel_obj.jump_url} but the request could not be found in the database.",interaction.user.id,cause_id=command_id)
+                    await self.send_response(interaction,f"This channel does not appear in the database as a request.")
+                    db.close()
+                    return
 
                 if not await self.check_request_owner(db, interaction, command_name="/cancelrequest", cause_id = command_id):
                     db.close()
@@ -821,18 +1058,21 @@ class CriticsGuildButler(discord.Client):
 
                 thread_id = interaction.channel_id
 
-                # Check the state of the request
-                query_state = """
-                    SELECT r.state
+                query_request = """
+                    SELECT r.author_id,r.state,r.list,r.type
                     FROM request r
                     WHERE r.thread_id = ?
                     """
-                res = cur.execute(query_state,(thread_id,))
-                state_id = res.fetchone()[0]                
+                res = cur.execute(query_request,(thread_id,))
+                (author_id,state_id,list_option_id,request_type_id) = res.fetchone()
                 state = RequestState(state_id)
+                list_option = RequestList(list_option_id)
+                request_type = RequestType(request_type_id)
+                author_mention = self.mention_user(author_id)                
 
+                # Check the state of the request
                 if state != RequestState.OPEN:
-                    await self.log_error(db, f"{user_mention} tried to cancel {channel_obj.jump_url} but the request is not in open state.",interaction.user_id,request_id=thread_id,cause_id=command_id)
+                    await self.log_error(db, f"{user_mention} tried to cancel {channel_obj.jump_url} but the request is not in open state.",interaction.user.id,request_id=thread_id,cause_id=command_id)
                     await self.send_response(interaction, f"You cannot cancel this request because it is not in open state and/or it has been claimed by a critic.")
                     db.close()
                     return
@@ -847,8 +1087,22 @@ class CriticsGuildButler(discord.Client):
                 res = cur.execute(query_update,data)
                 
                 # Return tokens
-                # TODO               
-                tokens_returned_str = ""
+                if list_option == RequestList.OPEN:
+                    tokens_returned_str = ""
+                elif list_option == RequestList.CRITIC:
+                    token_cost = self.critic_list_token_costs[request_type.value - 1]
+                    def token_update(previous):
+                        return previous + token_cost
+
+                    await self.update_tokens(db,author_id,token_update,request_id=thread_id,cause_id=command_id)
+                    tokens_returned_str = f"{self.tokens(token_cost)} were returned to {author_mention}."
+                elif list_option == RequestList.TRUSTED_CRITIC:
+                    token_cost = self.trusted_critic_list_token_costs[request_type.value - 1]
+                    def token_update(previous):
+                        return previous + token_cost
+
+                    await self.update_tokens(db,author_id,token_update,request_id=thread_id,cause_id=command_id)
+                    tokens_returned_str = f"{self.tokens(token_cost)} were returned to {author_mention}."
                 
                 # Lock the thread
                 await self.send_thread(channel_obj, f"{user_mention} cancelled this request. {tokens_returned_str}",mentions=False)
@@ -857,6 +1111,148 @@ class CriticsGuildButler(discord.Client):
                 await self.log_result(db,f"{user_mention} cancelled {channel_obj.jump_url} with reason: {reason}",interaction.user.id,request_id=thread_id,cause_id=command_id)
                                 
                 await self.send_response(interaction, f"The request was cancelled.")
+            except Exception as e:                
+                await self.log_system(db, f"UNCAUGHT EXCEPTION! - {str(e)}")
+            
+            db.close()
+
+        ###
+        # Critics
+        ###
+        
+        @self.tree.command(description=f"(Critics only) Reserve this request to respond to it within the next week.")        
+        async def reserverequest(interaction: discord.Interaction):
+            await self.defer(interaction)
+            
+            db = self.db_connect()            
+
+            try:
+                user_mention = self.mention_user(interaction.user.id)
+                channel_obj = await self.server_obj.fetch_channel(interaction.channel_id)
+                command_id = await self.log_command(db,f"{user_mention} attempted to reserve {channel_obj.jump_url}",interaction.user.id)
+                                
+                if not await self.check_critic(db, interaction, command_name="/reserverequest", cause_id = command_id):
+                    db.close()
+                    return
+
+                if not check_request(db,interaction.channel_id):
+                    await self.log_error(db,f"{user_mention} tried to reserve the request {channel_obj.jump_url} but the request could not be found in the database.",interaction.user.id,cause_id=command_id)
+                    await self.send_response(interaction,f"This channel does not appear in the database as a request.")
+                    db.close()
+                    return                              
+                                                 
+                cur = db.cursor()
+
+                thread_id = interaction.channel_id                
+
+                query_request = """
+                    SELECT r.state, r.list
+                    FROM request r
+                    WHERE r.thread_id = ?
+                    """
+                res = cur.execute(query_request,(thread_id,))
+                (state_id,list_id) = res.fetchone()
+                state = RequestState(state_id)
+                list_option = RequestList(list_id)
+                
+                # Check the list
+                if list_option == RequestList.OPEN:
+                    await self.log_error(db, f"{user_mention} tried to reserve {channel_obj.jump_url} but this is an open list request.",interaction.user.id,request_id=thread_id,cause_id=command_id)
+                    await self.send_response(interaction, f"You cannot reserve requests in the open list.")
+                    db.close()
+                    return        
+                
+                if list_option == RequestList.TRUSTED_CRITIC and (not any(role.id == self.trusted_critic_role_id for role in interaction.user.roles)):
+                    await self.log_error(db, f"{user_mention} tried to reserve {channel_obj.jump_url} in the trusted critic list, but they are not a trusted critic.",interaction.user.id,request_id=thread_id,cause_id=command_id)
+                    await self.send_repsonse(interaction, f"You are not allowed to reserve requests in the trusted critic list.")
+                    db.close()
+                    return
+
+                # Check the state of the request
+                if state != RequestState.OPEN:
+                    await self.log_error(db, f"{user_mention} tried to reserve {channel_obj.jump_url} but the request is not in open state.",interaction.user.id,request_id=thread_id,cause_id=command_id)
+                    await self.send_response(interaction, f"You cannot reserve this request because it is not in open state.")
+                    db.close()
+                    return
+
+                query_update = """
+                    UPDATE request
+                    SET state = :claimed_state, critic_id = :critic_id
+                    WHERE thread_id = :thread_id
+                    """
+                data = {"claimed_state":RequestState.CLAIMED.value, "critic_id":interaction.user.id, "thread_id":thread_id}
+                cur.execute(query_update,data)
+
+                await self.log_result(db,f"{user_mention} reserved {channel_obj.jump_url}",interaction.user.id,thread_id,cause_id=command_id)
+                await self.send_thread(channel_obj, f"{user_mention} has reserved this request, and should respond to it within the next week.")
+                await self.send_response(interaction, f"You reserved the request. Respond to it within the next week or release it if you will not be able to do so with `/releaserequest`.")
+            except Exception as e:                
+                await self.log_system(db, f"UNCAUGHT EXCEPTION! - {str(e)}")
+            
+            db.close()
+
+        @self.tree.command(description=f"(Critics only) Release this request so that other critics can respond to it.")        
+        async def releaserequest(interaction: discord.Interaction):
+            await self.defer(interaction)
+            
+            db = self.db_connect()            
+
+            try:
+                user_mention = self.mention_user(interaction.user.id)
+                channel_obj = await self.server_obj.fetch_channel(interaction.channel_id)
+                command_id = await self.log_command(db,f"{user_mention} attempted to release {channel_obj.jump_url}",interaction.user.id)
+                                
+                if not await self.check_critic(db, interaction, command_name="/releaserequest", cause_id = command_id):
+                    db.close()
+                    return
+
+                if not check_request(db,interaction.channel_id):
+                    await self.log_error(db,f"{user_mention} tried to release the request {channel_obj.jump_url} but the request could not be found in the database.",interaction.user.id,cause_id=command_id)
+                    await self.send_response(interaction,f"This channel does not appear in the database as a request.")
+                    db.close()
+                    return                              
+                                                 
+                cur = db.cursor()
+
+                thread_id = interaction.channel_id                
+
+                query_request = """
+                    SELECT r.state, r.list, r.critic_id
+                    FROM request r
+                    WHERE r.thread_id = ?
+                    """
+                res = cur.execute(query_request,(thread_id,))
+                (state_id,list_id,critic_id) = res.fetchone()
+                state = RequestState(state_id)
+                list_option = RequestList(list_id)                              
+
+                # Check the state of the request
+                if state != RequestState.CLAIMED:
+                    await self.log_error(db, f"{user_mention} tried to release {channel_obj.jump_url} but the request is not in claimed state.",interaction.user.id,request_id=thread_id,cause_id=command_id)
+                    await self.send_response(interaction, f"You cannot release this request because it is not in reserved state.")
+                    db.close()
+                    return
+
+                # Check they are the reserved critic, or a trusted critic
+                if critic_id != interaction.user.id and (not any(role.id == self.trusted_critic_role_id for role in interaction.user.roles)):
+                    await self.log_error(db, f"{user_mention} tried to release {channel_obj.jump_url} but they are not the critic that claimed the request (or a trusted critic).",interaction.user.id,request_id=thread_id,cause_id=command_id)
+                    await self.send_response(interaction, f"You cannot release this request because you did not reserve it.")
+                    db.close()
+                    return
+
+                query_update = """
+                    UPDATE request
+                    SET state = :open_state, critic_id = NULL
+                    WHERE thread_id = :thread_id
+                    """
+                data = {"open_state":RequestState.OPEN.value, "thread_id":thread_id}
+                cur.execute(query_update,data)
+
+                critic_mention = self.get_user_mention(critic_id)
+
+                await self.log_result(db,f"{critic_mention} was released from {channel_obj.jump_url}",critic_id,thread_id,cause_id=command_id)
+                await self.send_thread(channel_obj, f"{user_mention} has released this request. It may now be reserved by another critic, or cancelled.")
+                await self.send_response(interaction, f"You released the request.")
             except Exception as e:                
                 await self.log_system(db, f"UNCAUGHT EXCEPTION! - {str(e)}")
             
@@ -1073,7 +1469,7 @@ class CriticsGuildButler(discord.Client):
 
                     for critic_thread_id in critic_thread_ids:
                         thread_str = await self.display_request(critic_thread_id)
-                        result += f"{thread_str}\n"
+                        await self.send_admin_channel(thread_str)
                 else:
                     await self.send_admin_channel("No active critic requests")    
                 
@@ -1181,6 +1577,107 @@ class CriticsGuildButler(discord.Client):
                     await log_message(log)                    
 
                 await self.send_response(interaction, "Command complete.")
+            except Exception as e:                
+                await self.log_system(db, f"UNCAUGHT EXCEPTION! - {str(e)}")
+            
+            db.close()
+
+        @self.tree.command(description="(Admin only) Check request log.")
+        @app_commands.default_permissions(administrator=True)
+        @app_commands.checks.has_permissions(administrator=True)
+        @app_commands.describe(days="Number of past days to check the log for.", max_messages="Maximum number of log messages to print.", with_tree="Include causal tree of command (causes and effects).", commands="Include commands.", results="Include results.", errors="Include errors.")
+        async def checkrequestlog(interaction: discord.Interaction, days:int = 1, max_messages:int = 10, with_tree:bool = False, commands:bool = True, results:bool = True, errors:bool = True):
+            await self.defer(interaction)
+            
+            db = self.db_connect()
+
+            try:
+                user_mention = self.mention_user(interaction.user.id)
+                channel_obj = await self.server_obj.fetch_channel(interaction.channel_id)
+                command_id = await self.log_command(db,f"{user_mention} checked the log for {channel_obj.jump_url} (past {days} days, maximum of {max_messages} entries).",interaction.user.id)
+
+                if not check_request(db,interaction.channel_id):
+                    await self.log_error(db,f"{user_mention} tried to check the request log for {channel_obj.jump_url} but the request could not be found in the database.",interaction.user.id,cause_id=command_id)
+                    await self.send_response(interaction,f"This channel does not appear in the database as a request.")
+                    db.close()
+                    return
+
+                cur = db.cursor()
+
+                query = """
+                    SELECT
+                        l.log_id,
+                        l.user_id,
+                        datetime(l.timestamp),
+                        l.class,
+                        l.cause_id,
+                        l.summary
+                    FROM log l
+                    WHERE
+                        l.request_id = :request_id AND (julianday('now') - julianday(l.timestamp)) < :days
+                        AND (
+                            (:commands AND l.class = :command_class) OR
+                            (:results AND l.class = :result_class) OR
+                            (:errors AND l.class = :error_class)
+                        )
+                    ORDER BY l.timestamp DESC
+                    LIMIT :max_messages
+                    """
+                data = {"request_id":interaction.channel_id, "days": days, "commands": commands, "command_class": LogClass.COMMAND.value, "results": results, "result_class": LogClass.RESULT.value, "errors": errors, "error_class":LogClass.ERROR.value, "max_messages":max_messages}
+                res = cur.execute(query,data)
+                logs = res.fetchall()
+                logs.reverse()
+
+                async def log_message(log,with_cause=with_tree,with_consequences=with_tree,prefix=""):
+                    (log_id, user_id, date_str, log_class_id, cause_id, summary) = log
+                    log_class = LogClass(log_class_id)                                        
+
+                    message = f"{prefix}{self.get_class_icon(log_class)}{log_class.name}/{log_id} ({date_str}) - {summary}"                                        
+
+                    await self.send_admin_channel(message)
+
+                    if with_cause:
+                        query_cause = """
+                            SELECT
+                                l.log_id,
+                                l.user_id,
+                                datetime(l.timestamp),
+                                l.class,
+                                l.cause_id,
+                                l.summary
+                            FROM log l
+                            WHERE
+                                l.log_id = ?
+                            """
+                        res = cur.execute(query_cause,(cause_id,))
+                        log = res.fetchone()
+
+                        if log:
+                            await log_message(log,with_cause=True,with_consequences=False,prefix="caused by ")
+
+                    if with_consequences:
+                        query_consequences = """
+                            SELECT
+                                l.log_id,
+                                l.user_id,
+                                datetime(l.timestamp),
+                                l.class,
+                                l.cause_id,
+                                l.summary
+                            FROM log l
+                            WHERE
+                                l.cause_id = ?
+                            """
+                        res = cur.execute(query_consequences,(log_id,))
+                        logs = res.fetchall()
+
+                        for log in logs:
+                            await log_message(log,with_cause=False,with_consequences=True,prefix="with consequence ")
+                                
+                for log in logs:
+                    await log_message(log)                    
+
+                await self.send_response(interaction, "Command complete. Results can be found in log channel.")
             except Exception as e:                
                 await self.log_system(db, f"UNCAUGHT EXCEPTION! - {str(e)}")
             
@@ -1640,7 +2137,7 @@ class CriticsGuildButler(discord.Client):
             except Exception as e:                
                 await self.log_system(db, f"UNCAUGHT EXCEPTION! - {str(e)}")
             
-            db.close
+            db.close()
 
         @self.tree.command(description=f"(Admin only) Check mapper completed requests leaderboard.")
         @app_commands.default_permissions(administrator=True)
@@ -1724,4 +2221,4 @@ class CriticsGuildButler(discord.Client):
             except Exception as e:                
                 await self.log_system(db, f"UNCAUGHT EXCEPTION! - {str(e)}")
             
-            db.close       
+            db.close()           
