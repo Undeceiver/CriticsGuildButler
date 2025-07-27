@@ -109,8 +109,67 @@ class CriticsGuildButler(discord.Client):
 
         return
 
+    class CompletedVoteMapper(discord.ui.View):
+        def __init__(self,bot_obj,request_id,mapper_id):
+            super().__init__(timeout=None)
+            self.bot_obj : CriticsGuildButler = bot_obj
+            self.request_id = request_id
+            self.mapper_id = mapper_id
+
+        @discord.ui.button(label="Upvote", style=discord.ButtonStyle.success, emoji="👍")
+        async def upvote(self, interaction: discord.Interaction, button: discord.ui.Button):
+            db = self.bot_obj.db_connect()
+
+            user_mention = self.bot_obj.mention_user(interaction.user.id)
+            target_user_mention = self.bot_obj.mention_user(self.mapper_id)
+
+            def update_upvotes(previous):
+                return previous+1
+
+            await interaction.message.edit(view=None)            
+            command_id = await self.bot_obj.log_command(db,f"{user_mention} (critic) upvoted {target_user_mention} (mapper).",interaction.user.id,request_id=self.request_id)
+            await self.bot_obj.update_mapper_upvotes(db,self.mapper_id,update_upvotes,self.request_id,cause_id = command_id)
+            await self.bot_obj.send_dm(interaction.user,f"Upvoted!")
+
+            db.close()
+
+        @discord.ui.button(label="Dismiss", style=discord.ButtonStyle.secondary)
+        async def dismiss(self, interaction: discord.Interaction, button: discord.ui.Button):
+            await interaction.message.edit(view=None)
+            
+    class CompletedVoteCritic(discord.ui.View):
+        def __init__(self,bot_obj,request_id,critic_id):
+            super().__init__(timeout=None)
+            self.bot_obj : CriticsGuildButler = bot_obj
+            self.request_id = request_id
+            self.critic_id = critic_id
+
+        @discord.ui.button(label="Upvote", style=discord.ButtonStyle.success, emoji="👍")
+        async def upvote(self, interaction: discord.Interaction, button: discord.ui.Button):
+            db = self.bot_obj.db_connect()
+
+            user_mention = self.bot_obj.mention_user(interaction.user.id)
+            target_user_mention = self.bot_obj.mention_user(self.critic_id)
+
+            def update_upvotes(previous):
+                return previous+1
+
+            await interaction.message.edit(view=None)            
+            command_id = await self.bot_obj.log_command(db,f"{user_mention} (mapper) upvoted {target_user_mention} (critic).",interaction.user.id,request_id=self.request_id)
+            await self.bot_obj.update_critic_upvotes(db,self.critic_id,update_upvotes,self.request_id,cause_id = command_id)
+            await self.bot_obj.send_dm(interaction.user,f"Upvoted!")
+
+            db.close()
+
+        @discord.ui.button(label="Dismiss", style=discord.ButtonStyle.secondary)
+        async def dismiss(self, interaction: discord.Interaction, button: discord.ui.Button):
+            await interaction.message.edit(view=None)         
+
     async def on_thread_create(self, thread: discord.Thread):
         await self.process_thread(thread)
+
+    async def on_message(self, message):
+        await self.process_message(message)
 
     ###
     # Logic and presentation synchronous functions
@@ -411,6 +470,36 @@ class CriticsGuildButler(discord.Client):
         elif thread.parent_id == self.trusted_critic_list_channel_id:
             await self.newtrustedcriticrequest(thread)
 
+    async def process_message(self, message: discord.Message):
+        if message.author.id == self.bot_id:
+            return
+        if isinstance(message.channel,discord.Thread):
+            if message.channel.parent_id == self.critic_list_channel_id and (message.author.id != message.channel.owner_id) and (not any((role.id == self.trusted_critic_role_id or role.id == self.critic_role_id) for role in message.author.roles)):
+                await self.send_dm(message.author,f"Your message in {message.channel.jump_url} was deleted because only critics may respond to requests by other users in the critics list.")
+                await message.delete()
+
+                db = self.db_connect()
+                user_mention = self.mention_user(message.author.id)
+
+                await self.log_system(db,f"{user_mention} tried to post in {message.channel.jump_url} but it was deleted because they are not a critic.")
+
+                db.close()
+                return
+            if message.channel.parent_id == self.trusted_critic_list_channel_id and (message.author.id != message.channel.owner_id) and (not any((role.id == self.trusted_critic_role_id) for role in message.author.roles)):
+                await self.send_dm(message.author,f"Your message in {message.channel.jump_url} was deleted because only trusted critics may respond to requests by other users in the trusted critics list.")
+                await message.delete()
+                
+                db = self.db_connect()
+                user_mention = self.mention_user(message.author.id)
+
+                await self.log_system(db,f"{user_mention} tried to post in {message.channel.jump_url} but it was deleted because they are not a trusted critic.")
+
+                db.close()
+                return
+
+                
+
+
     ###
     # Interaction support methods
     ###
@@ -461,7 +550,7 @@ class CriticsGuildButler(discord.Client):
     async def check_critic(self, db, interaction: discord.Interaction, command_name, request_id = None, cause_id = None, **kwargs):
         if not any((role.id == self.trusted_critic_role_id or role.id == self.critic_role_id) for role in interaction.user.roles):
             user_mention = self.mention_user(interaction.user.id)
-            await self.log_error(db, f"{user_mention} tried to run {command_name} but they are not a critic.",user_id=interaction.user.id, request_id=request_id, cause_id=cause_id, **kwargs)
+            await self.log_error(db, f"{user_mention} tried to run `{command_name}` but they are not a critic.",user_id=interaction.user.id, request_id=request_id, cause_id=cause_id, **kwargs)
             await self.send_response(interaction, "Only critics can use this command.")
             return False
         else:
@@ -470,7 +559,7 @@ class CriticsGuildButler(discord.Client):
     async def check_trusted_critic(self, db, interaction: discord.Interaction, command_name, request_id = None, cause_id = None, **kwargs):
         if not any(role.id == self.trusted_critic_role_id for role in interaction.user.roles):
             user_mention = self.mention_user(interaction.user.id)
-            await self.log_error(db, f"{user_mention} tried to run {command_name} but they are not a trusted critic.",user_id=interaction.user.id, request_id=request_id, cause_id=cause_id, **kwargs)
+            await self.log_error(db, f"{user_mention} tried to run `{command_name}` but they are not a trusted critic.",user_id=interaction.user.id, request_id=request_id, cause_id=cause_id, **kwargs)
             await self.send_response(interaction, "Only trusted critics can use this command.")
             return False
         else:
@@ -483,12 +572,12 @@ class CriticsGuildButler(discord.Client):
         user_mention = self.mention_user(interaction.user.id)
 
         if not isinstance(channel_obj,discord.Thread):            
-            await self.log_error(db, f"{user_mention} tried to run {command_name} outside a thread.",interaction.user.id,cause_id=cause_id)
+            await self.log_error(db, f"{user_mention} tried to run `{command_name}` outside a thread.",interaction.user.id,cause_id=cause_id)
             await self.send_response(interaction, "This command can only be run in a Critic's Guild request you created.")
             return False
 
         if not check_request(db, thread_id):
-            await self.log_error(db, f"{user_mention} tried to run {command_name} in a thread not present in the database.",interaction.user.id,cause_id=cause_id)
+            await self.log_error(db, f"{user_mention} tried to run `{command_name}` in a thread not present in the database.",interaction.user.id,cause_id=cause_id)
             await self.send_response(interaction, "This command can only be run in a Critic's Guild request you created.")
             return False
         
@@ -504,7 +593,7 @@ class CriticsGuildButler(discord.Client):
             author_id = res.fetchone()[0]
 
             if author_id != interaction.user.id:
-                await self.log_error(db, f"{user_mention} tried to run {command_name} in a request they did not author.",interaction.user.id,cause_id=cause_id)
+                await self.log_error(db, f"{user_mention} tried to run `{command_name}` in a request they did not author.",interaction.user.id,cause_id=cause_id)
                 await self.send_response(interaction, "You cannot run this command because you do not own this request.")
                 return False
 
@@ -1105,7 +1194,7 @@ class CriticsGuildButler(discord.Client):
                     tokens_returned_str = f"{self.tokens(token_cost)} were returned to {author_mention}."
                 
                 # Lock the thread
-                await self.send_thread(channel_obj, f"{user_mention} cancelled this request. {tokens_returned_str}",mentions=False)
+                await self.send_thread(channel_obj, f"❌{user_mention} cancelled this request. {tokens_returned_str}",mentions=False)
                 await channel_obj.edit(locked=True,archived=True)
                 
                 await self.log_result(db,f"{user_mention} cancelled {channel_obj.jump_url} with reason: {reason}",interaction.user.id,request_id=thread_id,cause_id=command_id)
@@ -1164,7 +1253,7 @@ class CriticsGuildButler(discord.Client):
                 
                 if list_option == RequestList.TRUSTED_CRITIC and (not any(role.id == self.trusted_critic_role_id for role in interaction.user.roles)):
                     await self.log_error(db, f"{user_mention} tried to reserve {channel_obj.jump_url} in the trusted critic list, but they are not a trusted critic.",interaction.user.id,request_id=thread_id,cause_id=command_id)
-                    await self.send_repsonse(interaction, f"You are not allowed to reserve requests in the trusted critic list.")
+                    await self.send_response(interaction, f"You are not allowed to reserve requests in the trusted critic list.")
                     db.close()
                     return
 
@@ -1331,6 +1420,139 @@ class CriticsGuildButler(discord.Client):
 
                 await self.send_response(interaction, f"You rewarded {target_user_mention} {self.stars(1)}.")                
                 await self.send_dm(user, f"A trusted critic rewarded you {self.stars(1)} with reason: {reason}")
+            except Exception as e:                
+                await self.log_system(db, f"UNCAUGHT EXCEPTION! - {str(e)}")
+            
+            db.close()
+
+        @self.tree.command(description=f"(Trusted critics only) Mark request as completed.")
+        @app_commands.describe(return_tokens_mapper=f"The mapper interacted properly and will get {self.tokens(1)} back.", reward_star=f"The feedback given by the critic was very good and deserving of {self.stars(1)}. (Only in some cases)", critic=f"If the critic did not reserve the request.", notes=f"Anything else to add.")
+        async def completerequest(interaction: discord.Interaction, return_tokens_mapper: bool, reward_star: bool, critic: discord.Member = None, notes: str = ""):
+            await self.defer(interaction)
+            
+            db = self.db_connect()
+
+            try:
+                user_mention = self.mention_user(interaction.user.id)                
+                channel_obj = await self.server_obj.fetch_channel(interaction.channel_id)
+                command_id = await self.log_command(db,f"{user_mention} attempted to complete {channel_obj.jump_url}. Notes: {notes}",interaction.user.id)
+
+                if not check_request(db,interaction.channel_id):
+                    await self.log_error(db,f"{user_mention} tried to complete the request {channel_obj.jump_url} but the request could not be found in the database.",interaction.user.id,cause_id=command_id)
+                    await self.send_response(interaction,f"This channel does not appear in the database as a request.")
+                    db.close()
+                    return
+
+                if not await self.check_trusted_critic(db, interaction, command_name="/completerequest", cause_id = command_id):
+                    db.close()
+                    return
+
+                cur = db.cursor()
+
+                thread_id = interaction.channel_id
+
+                query_request = """
+                    SELECT r.author_id,r.critic_id,r.state,r.list,r.type
+                    FROM request r
+                    WHERE r.thread_id = ?
+                    """
+                res = cur.execute(query_request,(thread_id,))
+                (author_id,critic_id,state_id,list_option_id,request_type_id) = res.fetchone()
+                state = RequestState(state_id)
+                list_option = RequestList(list_option_id)
+                request_type = RequestType(request_type_id)
+                author_mention = self.mention_user(author_id)   
+                author_obj = await self.fetch_user(author_id)
+                
+                # Check the state of the request
+                if state == RequestState.OPEN:
+                    if critic is None:
+                        await self.log_error(db, f"{user_mention} tried to complete {channel_obj.jump_url} but the request is not claimed and the user did not indicate a critic.",interaction.user.id,request_id=thread_id,cause_id=command_id)
+                        await self.send_response(interaction, f"This request is open, so you need to indicate a critic to mark it as complete.")
+                        db.close()
+                        return
+
+                    critic_id = critic.id
+                elif state == RequestState.CLAIMED:
+                    if not critic is None and critic.id != critic_id:
+                        await self.log_error(db, f"{user_mention} tried to complete {channel_obj.jump_url} but the request is claimed and the user indicated a critic.",interaction.user.id,request_id=thread_id,cause_id=command_id)
+                        await self.send_response(interaction, f"You indicated a critic different from the one that has reserved this request. You don't need to indicate the critic if the request is reserved. Make sure the critic is right.")
+                        db.close()
+                        return                    
+                else:
+                    await self.log_error(db, f"{user_mention} tried to complete {channel_obj.jump_url} but the request is not in open or claimed state.",interaction.user.id,request_id=thread_id,cause_id=command_id)
+                    await self.send_response(interaction, f"You cannot complete this request because it is not in open or claimed state.")
+                    db.close()
+                    return
+
+                critic_mention = self.mention_user(critic_id)
+                critic_obj = await self.fetch_user(critic_id)
+
+                # Change state.
+                query_update = """
+                    UPDATE request
+                    SET state = :completed_state
+                    WHERE thread_id = :thread_id
+                    """
+                data = {"completed_state":RequestState.COMPLETED.value,"thread_id":thread_id}
+                res = cur.execute(query_update,data)
+                
+                # Return tokens
+                def token_update_critic(previous):
+                    return previous + token_reward
+
+                def token_update_mapper(previous):
+                    return previous + 1
+
+                if list_option == RequestList.OPEN:
+                    tokens_returned_str = ""
+                    author_dm_str = ""
+                    critic_dm_str = ""
+                elif list_option == RequestList.CRITIC:
+                    token_reward = self.critic_list_token_rewards[request_type.value - 1]                   
+
+                    await self.update_tokens(db,critic_id,token_update_critic,request_id=thread_id,cause_id=command_id)
+
+                    critic_dm_str = f"You received {self.tokens(token_reward)} as reward."
+
+                    if return_tokens_mapper:
+                        await self.update_tokens(db,author_id,token_update_mapper,request_id=thread_id,cause_id=command_id)                        
+                        tokens_returned_str = f"{self.tokens(token_reward)} were rewarded to {critic_mention} and {self.tokens(1)} were returned to {author_mention} for good engagement."
+                        author_dm_str = f"You received {self.tokens(1)} back for good engagement with the feedback."
+                    else:
+                        tokens_returned_str = f"{self.tokens(token_reward)} were rewarded to {critic_mention}."
+                        author_dm_str = f"In the future, you are encourage to engage more with the feedback you were given, and may get {self.tokens(1)} back if you do."
+                elif list_option == RequestList.TRUSTED_CRITIC:
+                    token_reward = self.trusted_critic_list_token_rewards[request_type.value - 1]                   
+
+                    await self.update_tokens(db,critic_id,token_update_critic,request_id=thread_id,cause_id=command_id)
+
+                    critic_dm_str = f"You received {self.tokens(token_reward)} as reward."
+
+                    if return_tokens_mapper:
+                        await self.update_tokens(db,author_id,token_update_mapper,request_id=thread_id,cause_id=command_id)                        
+                        tokens_returned_str = f"{self.tokens(token_reward)} were rewarded to {critic_mention} and {self.tokens(1)} were returned to {author_mention} for good engagement."
+                        author_dm_str = f"You received {self.tokens(1)} back for good engagement with the feedback."
+                    else:
+                        tokens_returned_str = f"{self.tokens(token_reward)} were rewarded to {critic_mention}."
+                        author_dm_str = f"In the future, you are encourage to engage more with the feedback you were given, and may get {self.tokens(1)} back if you do."
+                
+                if rewardstar:
+                    def updatestars(previous):
+                        return previous+1
+
+                    await self.update_stars(db,critic_id,updatestars,request_id=thread_id,cause_id=command_id)
+                    star_str = f"You were also awarded {self.stars(1)} for good feedback!"
+                else:
+                    star_str = ""
+
+                await self.send_dm(author_obj,f"A trusted critic marked your request {channel_obj.jump_url} as completed by {critic_mention}. If this is an error, please tell a member of Staff. {author_dm_str} Would you recommend {critic_mention} as a critic?",view=self.CompletedVoteCritic(self,thread_id,critic_id))
+                await self.send_dm(critic_obj,f"A trusted critic marked the request {channel_obj.jump_url} by {author_mention} that you responded to as completed. If this is an error, please tell a member of Staff. {critic_dm_str} {star_str} Would you recommend {author_mention} as a good mapper to interact with?",view=self.CompletedVoteMapper(self,thread_id,author_id))
+                await self.send_thread(channel_obj, f"✅{user_mention} marked this requests as complete. {tokens_returned_str} Consider upvoting anonymously using the DM that was sent to both of you.",mentions=False)
+                
+                await self.log_result(db,f"{user_mention} marked {channel_obj.jump_url} as completed with notes: {notes}",interaction.user.id,request_id=thread_id,cause_id=command_id)
+                                
+                await self.send_response(interaction, f"The request was completed.")
             except Exception as e:                
                 await self.log_system(db, f"UNCAUGHT EXCEPTION! - {str(e)}")
             
@@ -2218,6 +2440,35 @@ class CriticsGuildButler(discord.Client):
                     await self.update_critic_upvotes(db,user_id,reset_fun,cause_id=command_id,update_historic=False)
                 
                 await self.send_response(interaction, f"The {self.stars(-1)} and {self.upvotes(-1)} leaderboards have been reset.")
+            except Exception as e:                
+                await self.log_system(db, f"UNCAUGHT EXCEPTION! - {str(e)}")
+            
+            db.close()
+            
+        @self.tree.command(description=f"(Admin only) Reset {self.tokens(-1)} monthly claims.")
+        @app_commands.default_permissions(administrator=True)
+        @app_commands.checks.has_permissions(administrator=True)        
+        async def resetclaims(interaction: discord.Interaction):
+            await self.defer(interaction)
+            
+            db = self.db_connect()
+
+            try:
+                user_mention = self.mention_user(interaction.user.id)
+                message = f"{user_mention} reset the {self.tokens(-1)} monthly claims."
+
+                command_id = await self.log_command(db,message,interaction.user.id)
+                
+                cur = db.cursor()
+
+                query = """
+                    UPDATE user
+                    SET claimed_tokens = 0
+                    """
+                
+                res = cur.execute(query)                
+                                
+                await self.send_response(interaction, f"The {self.tokens(-1)} monthly claims have been reset for all users.")
             except Exception as e:                
                 await self.log_system(db, f"UNCAUGHT EXCEPTION! - {str(e)}")
             
