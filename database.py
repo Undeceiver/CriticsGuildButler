@@ -3,7 +3,7 @@ import sqlite3
 database_name = "database.db"
 
 def connect():
-    return sqlite3.connect(database_name,autocommit=True)
+    return sqlite3.connect(database_name,isolation_level=None)
 
 def init_database():
     db = connect()
