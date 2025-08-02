@@ -1563,15 +1563,15 @@ class CriticsGuildButler(discord.Client):
         ###
 
         @self.tree.command(description="(Admin only) Check if the butler is online.")
-        @app_commands.default_permissions(administrator=True)
-        @app_commands.checks.has_permissions(administrator=True)
+        @app_commands.default_permissions(manage_guild=True)
+        @app_commands.checks.has_permissions(manage_guild=True)
         async def ping(interaction: discord.Interaction):
             await self.defer(interaction)
             await self.send_response(interaction,"Pong.")
 
         @self.tree.command(description="(Admin only) Make the butler go offline.")
-        @app_commands.default_permissions(administrator=True)
-        @app_commands.checks.has_permissions(administrator=True)
+        @app_commands.default_permissions(manage_guild=True)
+        @app_commands.checks.has_permissions(manage_guild=True)
         async def shutdown(interaction: discord.Interaction):
             await self.defer(interaction)
             db = self.db_connect()
@@ -1589,8 +1589,8 @@ class CriticsGuildButler(discord.Client):
                 await self.log_system(db, f"UNCAUGHT EXCEPTION! - {str(e)}")
 
         @self.tree.command(description="(Admin only) Check user status.")
-        @app_commands.default_permissions(administrator=True)
-        @app_commands.checks.has_permissions(administrator=True)
+        @app_commands.default_permissions(manage_guild=True)
+        @app_commands.checks.has_permissions(manage_guild=True)
         @app_commands.describe(user="User to check status.")
         async def checkuser(interaction: discord.Interaction, user: discord.Member):
             await self.defer(interaction)
@@ -1702,8 +1702,8 @@ class CriticsGuildButler(discord.Client):
             db.close()
 
         @self.tree.command(description="(Admin only) Check user log.")
-        @app_commands.default_permissions(administrator=True)
-        @app_commands.checks.has_permissions(administrator=True)
+        @app_commands.default_permissions(manage_guild=True)
+        @app_commands.checks.has_permissions(manage_guild=True)
         @app_commands.describe(user="User to check log.", days="Number of past days to check the log for.", max_messages="Maximum number of log messages to print.", with_tree="Include causal tree of command (causes and effects).", commands="Include commands.", results="Include results.", errors="Include errors.")
         async def checkuserlog(interaction: discord.Interaction, user: discord.Member, days:int = 1, max_messages:int = 10, with_tree:bool = False, commands:bool = True, results:bool = True, errors:bool = True):
             await self.defer(interaction)
@@ -1805,8 +1805,8 @@ class CriticsGuildButler(discord.Client):
             db.close()
 
         @self.tree.command(description="(Admin only) Check request log.")
-        @app_commands.default_permissions(administrator=True)
-        @app_commands.checks.has_permissions(administrator=True)
+        @app_commands.default_permissions(manage_guild=True)
+        @app_commands.checks.has_permissions(manage_guild=True)
         @app_commands.describe(days="Number of past days to check the log for.", max_messages="Maximum number of log messages to print.", with_tree="Include causal tree of command (causes and effects).", commands="Include commands.", results="Include results.", errors="Include errors.")
         async def checkrequestlog(interaction: discord.Interaction, days:int = 1, max_messages:int = 10, with_tree:bool = False, commands:bool = True, results:bool = True, errors:bool = True):
             await self.defer(interaction)
@@ -1906,8 +1906,8 @@ class CriticsGuildButler(discord.Client):
             db.close()
 
         @self.tree.command(description="(Admin only) Check system log.")
-        @app_commands.default_permissions(administrator=True)
-        @app_commands.checks.has_permissions(administrator=True)
+        @app_commands.default_permissions(manage_guild=True)
+        @app_commands.checks.has_permissions(manage_guild=True)
         @app_commands.describe(days="Number of past days to check the log for.", max_messages="Maximum number of log messages to print.", with_tree="Include causal tree of command (causes and effects).")
         async def checksystemlog(interaction: discord.Interaction, days:int = 1, max_messages:int = 10, with_tree:bool = True):
             await self.defer(interaction)
@@ -2002,8 +2002,8 @@ class CriticsGuildButler(discord.Client):
             db.close()
 
         @self.tree.command(description=f"(Admin only) Set {self.tokens(-1)} count of user.")
-        @app_commands.default_permissions(administrator=True)
-        @app_commands.checks.has_permissions(administrator=True)
+        @app_commands.default_permissions(manage_guild=True)
+        @app_commands.checks.has_permissions(manage_guild=True)
         @app_commands.describe(user=f"User to set {self.tokens(-1)} for.", tokens=f"New number of {self.tokens(-1)}.", reason=f"Justification.")
         async def settokens(interaction: discord.Interaction, user: discord.Member, tokens: int, reason: str):
             await self.defer(interaction)
@@ -2029,8 +2029,8 @@ class CriticsGuildButler(discord.Client):
             db.close()
 
         @self.tree.command(description=f"(Admin only) Set {self.stars(-1)} count of user.")
-        @app_commands.default_permissions(administrator=True)
-        @app_commands.checks.has_permissions(administrator=True)
+        @app_commands.default_permissions(manage_guild=True)
+        @app_commands.checks.has_permissions(manage_guild=True)
         @app_commands.describe(user=f"User to set {self.stars(-1)} for.", stars=f"New number of {self.stars(-1)}.", reason=f"Justification.")
         async def setstars(interaction: discord.Interaction, user: discord.Member, stars: int, reason: str):
             await self.defer(interaction)
@@ -2056,8 +2056,8 @@ class CriticsGuildButler(discord.Client):
             db.close()
 
         @self.tree.command(description=f"(Admin only) Set {self.upvotes(-1)} count of mapper.")
-        @app_commands.default_permissions(administrator=True)
-        @app_commands.checks.has_permissions(administrator=True)
+        @app_commands.default_permissions(manage_guild=True)
+        @app_commands.checks.has_permissions(manage_guild=True)
         @app_commands.describe(user=f"Mapper to set {self.upvotes(-1)} for.", upvotes=f"New number of {self.upvotes(-1)}.", reason=f"Justification.")
         async def setmapperupvotes(interaction: discord.Interaction, user: discord.Member, upvotes: int, reason: str):
             await self.defer(interaction)
@@ -2083,8 +2083,8 @@ class CriticsGuildButler(discord.Client):
             db.close()
 
         @self.tree.command(description=f"(Admin only) Set {self.upvotes(-1)} count of critic.")
-        @app_commands.default_permissions(administrator=True)
-        @app_commands.checks.has_permissions(administrator=True)
+        @app_commands.default_permissions(manage_guild=True)
+        @app_commands.checks.has_permissions(manage_guild=True)
         @app_commands.describe(user=f"Critic to set {self.upvotes(-1)} for.", upvotes=f"New number of {self.upvotes(-1)}.", reason="Justification.")
         async def setcriticupvotes(interaction: discord.Interaction, user: discord.Member, upvotes: int, reason: str):
             await self.defer(interaction)
@@ -2110,8 +2110,8 @@ class CriticsGuildButler(discord.Client):
             db.close()   
             
         @self.tree.command(description=f"(Admin only) Set {self.penalties(-1)} count of user.")
-        @app_commands.default_permissions(administrator=True)
-        @app_commands.checks.has_permissions(administrator=True)
+        @app_commands.default_permissions(manage_guild=True)
+        @app_commands.checks.has_permissions(manage_guild=True)
         @app_commands.describe(user=f"User to set {self.penalties(-1)} for.", penalties=f"New number of {self.penalties(-1)}.", reason="Justification.")
         async def setpenalties(interaction: discord.Interaction, user: discord.Member, penalties: int, reason: str):
             await self.defer(interaction)
@@ -2137,8 +2137,8 @@ class CriticsGuildButler(discord.Client):
             db.close()
 
         @self.tree.command(description=f"(Admin only) Check {self.stars(-1)} leaderboard.")
-        @app_commands.default_permissions(administrator=True)
-        @app_commands.checks.has_permissions(administrator=True)
+        @app_commands.default_permissions(manage_guild=True)
+        @app_commands.checks.has_permissions(manage_guild=True)
         @app_commands.describe(max_critics="Maximum number of critics to show.")
         async def starleaderboard(interaction: discord.Interaction, max_critics:int = 10, historic: bool = False):
             await self.defer(interaction)
@@ -2197,8 +2197,8 @@ class CriticsGuildButler(discord.Client):
             db.close()
 
         @self.tree.command(description=f"(Admin only) Check critic {self.upvotes(-1)} leaderboard.")
-        @app_commands.default_permissions(administrator=True)
-        @app_commands.checks.has_permissions(administrator=True)
+        @app_commands.default_permissions(manage_guild=True)
+        @app_commands.checks.has_permissions(manage_guild=True)
         @app_commands.describe(max_critics="Maximum number of critics to show.")
         async def criticupvoteleaderboard(interaction: discord.Interaction, max_critics:int = 10, historic: bool = False):
             await self.defer(interaction)
@@ -2257,8 +2257,8 @@ class CriticsGuildButler(discord.Client):
             db.close()
 
         @self.tree.command(description=f"(Admin only) Check mapper {self.upvotes(-1)} leaderboard.")
-        @app_commands.default_permissions(administrator=True)
-        @app_commands.checks.has_permissions(administrator=True)
+        @app_commands.default_permissions(manage_guild=True)
+        @app_commands.checks.has_permissions(manage_guild=True)
         @app_commands.describe(max_mappers="Maximum number of mappers to show.")
         async def mapperupvoteleaderboard(interaction: discord.Interaction, max_mappers:int = 10, historic: bool = False):
             await self.defer(interaction)
@@ -2317,8 +2317,8 @@ class CriticsGuildButler(discord.Client):
             db.close()
 
         @self.tree.command(description=f"(Admin only) Check critic completed requests leaderboard.")
-        @app_commands.default_permissions(administrator=True)
-        @app_commands.checks.has_permissions(administrator=True)
+        @app_commands.default_permissions(manage_guild=True)
+        @app_commands.checks.has_permissions(manage_guild=True)
         @app_commands.describe(max_critics="Maximum number of critics to show.")
         async def criticcompletionleaderboard(interaction: discord.Interaction, max_critics:int = 10):
             await self.defer(interaction)
@@ -2362,8 +2362,8 @@ class CriticsGuildButler(discord.Client):
             db.close()
 
         @self.tree.command(description=f"(Admin only) Check mapper completed requests leaderboard.")
-        @app_commands.default_permissions(administrator=True)
-        @app_commands.checks.has_permissions(administrator=True)
+        @app_commands.default_permissions(manage_guild=True)
+        @app_commands.checks.has_permissions(manage_guild=True)
         @app_commands.describe(max_mappers="Maximum number of mappers to show.")
         async def mappercompletionleaderboard(interaction: discord.Interaction, max_mappers:int = 10):
             await self.defer(interaction)
@@ -2407,8 +2407,8 @@ class CriticsGuildButler(discord.Client):
             db.close()
 
         @self.tree.command(description=f"(Admin only) Reset {self.stars(-1)} and {self.upvotes(-1)} leaderboards.")
-        @app_commands.default_permissions(administrator=True)
-        @app_commands.checks.has_permissions(administrator=True)        
+        @app_commands.default_permissions(manage_guild=True)
+        @app_commands.checks.has_permissions(manage_guild=True)        
         async def resetleaderboards(interaction: discord.Interaction):
             await self.defer(interaction)
             
@@ -2446,8 +2446,8 @@ class CriticsGuildButler(discord.Client):
             db.close()
             
         @self.tree.command(description=f"(Admin only) Reset {self.tokens(-1)} monthly claims.")
-        @app_commands.default_permissions(administrator=True)
-        @app_commands.checks.has_permissions(administrator=True)        
+        @app_commands.default_permissions(manage_guild=True)
+        @app_commands.checks.has_permissions(manage_guild=True)        
         async def resetclaims(interaction: discord.Interaction):
             await self.defer(interaction)
             
