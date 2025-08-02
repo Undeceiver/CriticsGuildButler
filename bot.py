@@ -745,8 +745,8 @@ class CriticsGuildButler(discord.Client):
             await self.send_thread(thread, f"✅The {thread.applied_tags[0].emoji.name}**{thread.applied_tags[0].name}** request has been registered. {user_mention} now has {requests+1}/{self.max_requests} active requests.",mentions=False)
             await self.send_thread(thread, f"Requests cannot be reserved in the open list, but anybody may express their interest in responding to this request.",mentions=False)
             await self.send_thread(thread, f"❌{user_mention} may cancel the request if nobody has responded to it by using `/cancelrequest`.",mentions=False)
-            if not has_attachment:
-                await self.send_thread(thread,f"⚠️No attachment was detected on the original message. If this is a mistake, please remember to attach your map file now. Ignore if attachment isn't necessary.",mentions=False)
+            #if not has_attachment:
+            #    await self.send_thread(thread,f"⚠️No attachment was detected on the original message. If this is a mistake, please remember to attach your map file now. Ignore if attachment isn't necessary.",mentions=False)
 
         except Exception as e:                
             await self.log_system(db, f"UNCAUGHT EXCEPTION! - {str(e)}")
@@ -843,8 +843,8 @@ class CriticsGuildButler(discord.Client):
             await self.send_thread(thread, f"✅The {thread.applied_tags[0].emoji.name}**{thread.applied_tags[0].name}** request has been registered. {user_mention} consumed {self.tokens(token_cost)}. {user_mention} now has {requests+1}/{self.max_requests} active requests.",mentions=False)
             await self.send_thread(thread, f"Only critics may respond to requests in this list. Critics interested in responding to this request should reserve it with `/reserverequest`. Responding to this request will reward {self.tokens(token_reward)}.",mentions=False)
             await self.send_thread(thread, f"❌{user_mention} may cancel the request if nobody has responded to it by using `/cancelrequest`.",mentions=False)
-            if not has_attachment:
-                await self.send_thread(thread,f"⚠️No attachment was detected on the original message. If this is a mistake, please remember to attach your map file now. Ignore if attachment isn't necessary.",mentions=False)
+            #if not has_attachment:
+            #    await self.send_thread(thread,f"⚠️No attachment was detected on the original message. If this is a mistake, please remember to attach your map file now. Ignore if attachment isn't necessary.",mentions=False)
 
         except Exception as e:                
             await self.log_system(db, f"UNCAUGHT EXCEPTION! - {str(e)}")
@@ -941,8 +941,8 @@ class CriticsGuildButler(discord.Client):
             await self.send_thread(thread, f"✅The {thread.applied_tags[0].emoji.name}**{thread.applied_tags[0].name}** request has been registered. {user_mention} consumed {self.tokens(token_cost)}. {user_mention} now has {requests+1}/{self.max_requests} active requests.",mentions=False)
             await self.send_thread(thread, f"Only trusted critics may respond to requests in this list. Trusted critics interested in responding to this request should reserve it with `/reserverequest`. Responding to this request will reward {self.tokens(token_reward)}.",mentions=False)
             await self.send_thread(thread, f"❌{user_mention} may cancel the request if nobody has responded to it by using `/cancelrequest`.",mentions=False)
-            if not has_attachment:
-                await self.send_thread(thread,f"⚠️No attachment was detected on the original message. If this is a mistake, please remember to attach your map file now. Ignore if attachment isn't necessary.",mentions=False)
+            #if not has_attachment:
+            #    await self.send_thread(thread,f"⚠️No attachment was detected on the original message. If this is a mistake, please remember to attach your map file now. Ignore if attachment isn't necessary.",mentions=False)
 
         except Exception as e:                
             await self.log_system(db, f"UNCAUGHT EXCEPTION! - {str(e)}")
@@ -1337,7 +1337,7 @@ class CriticsGuildButler(discord.Client):
                 data = {"open_state":RequestState.OPEN.value, "thread_id":thread_id}
                 cur.execute(query_update,data)
 
-                critic_mention = self.get_user_mention(critic_id)
+                critic_mention = self.mention_user(critic_id)
 
                 await self.log_result(db,f"{critic_mention} was released from {channel_obj.jump_url}",critic_id,thread_id,cause_id=command_id)
                 await self.send_thread(channel_obj, f"{user_mention} has released this request. It may now be reserved by another critic, or cancelled.")
