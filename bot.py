@@ -967,14 +967,14 @@ class CriticsGuildButler(discord.Client):
             user_mention = self.mention_user(thread.owner_id)
             command_id = await self.log_command(db,f"A thread initiated by {user_mention} was deleted from the open list.",thread.owner_id)
 
-            if not check_request(db,thread.channel_id):
+            if not check_request(db,thread.id):
                 await self.log_error(db,f"Deleted thread initiated by {user_mention} was not found in the database.",thread.owner_id,cause_id=command_id)                
                 db.close()
                 return
             
             cur = db.cursor()
 
-            thread_id = thread.channel_id
+            thread_id = thread.id
 
             query_request = """
                 SELECT r.author_id,r.state,r.list,r.type
