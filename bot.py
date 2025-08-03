@@ -168,6 +168,9 @@ class CriticsGuildButler(discord.Client):
     async def on_thread_create(self, thread: discord.Thread):
         await self.process_thread(thread)
 
+    async def on_thread_delete(self, thread: discord.Thread):
+        await self.process_thread_deleted(thread)
+
     async def on_message(self, message):
         await self.process_message(message)
 
@@ -469,6 +472,14 @@ class CriticsGuildButler(discord.Client):
             await self.newcriticrequest(thread)
         elif thread.parent_id == self.trusted_critic_list_channel_id:
             await self.newtrustedcriticrequest(thread)
+
+    async def process_thread_deleted(self, thread: discord.Thread):
+        if thread.parent_id == self.open_list_channel_id:
+            await self.deleterequest(thread)
+        elif thread.parent_id == self.critic_list_channel_id:
+            await self.deleterequest(thread)
+        elif thread.parent_id == self.trusted_critic_list_channel_id:
+            await self.deletecrequest(thread)
 
     async def process_message(self, message: discord.Message):
         if message.author.id == self.bot_id:
@@ -949,6 +960,76 @@ class CriticsGuildButler(discord.Client):
             
         db.close()
 
+    async def deleterequest(self, thread: discord.Thread):
+        db = self.db_connect()
+
+        try:            
+            user_mention = self.mention_user(thread.owner_id)
+            command_id = await self.log_command(db,f"A thread initiated by {user_mention} was deleted from the open list.",thread.owner_id)
+
+            if not check_request(db,thread.channel_id):
+                await self.log_error(db,f"Deleted thread initiated by {user_mention} was not found in the database.",thread.owner_id,cause_id=command_id)                
+                db.close()
+                return
+            
+            cur = db.cursor()
+
+            thread_id = thread.channel_id
+
+            query_request = """
+                SELECT r.author_id,r.state,r.list,r.type
+                FROM request r
+                WHERE r.thread_id = ?
+                """
+            res = cur.execute(query_request,(thread_id,))
+            (author_id,state_id,list_option_id,request_type_id) = res.fetchone()
+            state = RequestState(state_id)
+            list_option = RequestList(list_option_id)
+            request_type = RequestType(request_type_id)
+            author_mention = self.mention_user(author_id)                
+
+            # Check the state of the request
+            if state != RequestState.OPEN and state != RequestState.CLAIMED:
+                await self.log_result(db, f"A thread initiated by {user_mention} was deleted, but the request was already cancelled or completed. Doing nothing as a result.",thread.owner_id,request_id=thread_id,cause_id=command_id)                
+                db.close()
+                return
+
+            # Change state.
+            query_update = """
+                UPDATE request
+                SET state = :cancelled_state, critic_id = NULL
+                WHERE thread_id = :thread_id
+                """
+            data = {"cancelled_state":RequestState.CANCELLED.value,"thread_id":thread_id}
+            res = cur.execute(query_update,data)
+                
+            # Return tokens
+            if list_option == RequestList.OPEN:
+                tokens_returned_str = ""
+            elif list_option == RequestList.CRITIC:
+                token_cost = self.critic_list_token_costs[request_type.value - 1]
+                def token_update(previous):
+                    return previous + token_cost
+
+                await self.update_tokens(db,author_id,token_update,request_id=thread_id,cause_id=command_id)
+                tokens_returned_str = f"{self.tokens(token_cost)} were returned to you. "
+            elif list_option == RequestList.TRUSTED_CRITIC:
+                token_cost = self.trusted_critic_list_token_costs[request_type.value - 1]
+                def token_update(previous):
+                    return previous + token_cost
+
+                await self.update_tokens(db,author_id,token_update,request_id=thread_id,cause_id=command_id)
+                tokens_returned_str = f"{self.tokens(token_cost)} were returned to you. "              
+               
+            await self.log_result(db,f"A thread initiated by {user_mention} was deleted, and the associated request was cancelled.",thread.owner_id,request_id=thread_id,cause_id=command_id)
+                            
+            user = await self.server_obj.fetch_member(thread.owner_id)
+            await self.send_dm(user,f"A request thread you created on the critic's guild was deleted. {tokens_returned_str}This should not be the norm, if it was you who deleted the thread, please do not do this in the future as it can create issues. Instead, use `/cancelrequest`. If it was not you who deleted the thread, consider letting a member of Staff know of the issue.")
+        except Exception as e:                
+            await self.log_system(db, f"UNCAUGHT EXCEPTION! - {str(e)}")
+            
+        db.close()
+
     ###
     # Slash Commands
     ###
@@ -1021,6 +1102,13 @@ class CriticsGuildButler(discord.Client):
                     await self.send_response(interaction,f"You cannot gift {self.tokens(-1)} to yourself!")
                     db.close()
                     return
+
+                if not check_user(db,user.id,create=False):
+                    await self.log_error(db, summary=f"{target_user_mention} cannot be gifted {self.tokens(-1)} because they have never interacted with the bot before.", user_id=interaction.user.id,cause_id=command_id)
+                    await self.send_response(interaction, f"{target_user_mention} cannot be gifted {self.tokens(-1)} because they have never interacted with the bot before. This is an intentional limitation. Please do not gift tokens to users unless they have participated in the guild before.")
+                    db.close()
+                    return
+
                 cur = db.cursor()
 
                 if tokens <= 0:
@@ -1053,6 +1141,7 @@ class CriticsGuildButler(discord.Client):
                 (previous_self_tokens, new_self_tokens) = await self.update_tokens(db,interaction.user.id,reduce_tokens_fun,cause_id=command_id)
                 (previous_other_tokens, new_other_tokens) = await self.update_tokens(db,user.id,increase_tokens_fun,cause_id=command_id)
 
+                await self.send_dm(user, f"{user_mention} gifted you {self.tokens(tokens)} and you now have {self.tokens(new_other_tokens)} in total.")
                 await self.send_response(interaction, f"You gifted {self.tokens(tokens)} to {target_user_mention}, and now have {self.tokens(new_self_tokens)} left. Very kind of you!")
             except Exception as e:                
                 await self.log_system(db, f"UNCAUGHT EXCEPTION! - {str(e)}")
@@ -1548,7 +1637,7 @@ class CriticsGuildButler(discord.Client):
 
                 await self.send_dm(author_obj,f"A trusted critic marked your request {channel_obj.jump_url} as completed by {critic_mention}. If this is an error, please tell a member of Staff. {author_dm_str} Would you recommend {critic_mention} as a critic?",view=self.CompletedVoteCritic(self,thread_id,critic_id))
                 await self.send_dm(critic_obj,f"A trusted critic marked the request {channel_obj.jump_url} by {author_mention} that you responded to as completed. If this is an error, please tell a member of Staff. {critic_dm_str} {star_str} Would you recommend {author_mention} as a good mapper to interact with?",view=self.CompletedVoteMapper(self,thread_id,author_id))
-                await self.send_thread(channel_obj, f"✅{user_mention} marked this requests as complete. {tokens_returned_str} Consider upvoting anonymously using the DM that was sent to both of you.",mentions=False)
+                await self.send_thread(channel_obj, f"✅{user_mention} marked this request as complete. {tokens_returned_str} Consider upvoting anonymously using the DM that was sent to both of you.",mentions=False)
                 
                 await self.log_result(db,f"{user_mention} marked {channel_obj.jump_url} as completed with notes: {notes}",interaction.user.id,request_id=thread_id,cause_id=command_id)
                                 
