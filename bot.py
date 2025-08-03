@@ -1094,8 +1094,7 @@ class CriticsGuildButler(discord.Client):
                 target_user_mention = self.mention_user(user.id)
                 command_id = await self.log_command(db,f"{user_mention} gifted {self.tokens(tokens)} to {target_user_mention}.",interaction.user.id)
 
-                check_user(db,interaction.user.id)
-                check_user(db,user.id)
+                check_user(db,interaction.user.id)                
 
                 if user.id == interaction.user.id:
                     await self.log_error(db, summary=f"{user_mention} tried to gift {self.tokens(tokens)} to themselves.", user_id=interaction.user.id,cause_id=command_id)
