@@ -12,6 +12,8 @@ import textwrap
 
 from enum import Enum
 
+butler_version = "V2. Updated 2025/10/11."
+
 class LogClass(Enum):
     SYSTEM = 1
     COMMAND = 2
@@ -105,7 +107,7 @@ class CriticsGuildButler(discord.Client):
         self.log_channel_obj = await self.fetch_channel(self.log_channel_id)
         self.trusted_critic_role_obj = await self.server_obj.fetch_role(self.trusted_critic_role_id)
 
-        await self.log_system(db,"Butler ready.")
+        await self.log_system(db,f"Butler ready. Version info: {butler_version}")
 
         return
 
@@ -243,6 +245,8 @@ class CriticsGuildButler(discord.Client):
     async def update_tokens(self, db, user_id, update_fun, request_id = None, cause_id = None, **kwargs):
         cur = db.cursor()
 
+        check_user(db, user_id)
+
         query = """
             SELECT
                 u.tokens
@@ -268,6 +272,8 @@ class CriticsGuildButler(discord.Client):
 
     async def update_stars(self, db, user_id, update_fun, request_id = None, cause_id = None, update_historic=True, **kwargs):
         cur = db.cursor()
+
+        check_user(db, user_id)
 
         query = """
             SELECT
@@ -308,6 +314,8 @@ class CriticsGuildButler(discord.Client):
     async def update_mapper_upvotes(self, db, user_id, update_fun, request_id = None, cause_id = None, update_historic=True, **kwargs):
         cur = db.cursor()
 
+        check_user(db, user_id)
+
         query = """
             SELECT
                 u.mapper_upvotes,
@@ -347,6 +355,8 @@ class CriticsGuildButler(discord.Client):
     async def update_critic_upvotes(self, db, user_id, update_fun, request_id = None, cause_id = None, update_historic=True, **kwargs):
         cur = db.cursor()
 
+        check_user(db, user_id)
+
         query = """
             SELECT
                 u.critic_upvotes,
@@ -385,6 +395,8 @@ class CriticsGuildButler(discord.Client):
 
     async def update_penalties(self, db, user_id, update_fun, request_id = None, cause_id = None, **kwargs):
         cur = db.cursor()
+
+        check_user(db, user_id)
 
         query = """
             SELECT
@@ -965,7 +977,7 @@ class CriticsGuildButler(discord.Client):
 
         try:            
             user_mention = self.mention_user(thread.owner_id)
-            command_id = await self.log_command(db,f"A thread initiated by {user_mention} was deleted from the open list.",thread.owner_id)
+            command_id = await self.log_command(db,f"A thread initiated by {user_mention} was deleted.",thread.owner_id)
 
             if not check_request(db,thread.id):
                 await self.log_error(db,f"Deleted thread initiated by {user_mention} was not found in the database.",thread.owner_id,cause_id=command_id)                
@@ -1283,10 +1295,12 @@ class CriticsGuildButler(discord.Client):
                 
                 # Lock the thread
                 await self.send_thread(channel_obj, f"❌{user_mention} cancelled this request. {tokens_returned_str}",mentions=False)
+                starter_message_obj = await channel_obj.fetch_message(interaction.channel_id)
+                await starter_message_obj.add_reaction("🛑")                
                 await channel_obj.edit(locked=True,archived=True)
                 
                 await self.log_result(db,f"{user_mention} cancelled {channel_obj.jump_url} with reason: {reason}",interaction.user.id,request_id=thread_id,cause_id=command_id)
-                                
+                
                 await self.send_response(interaction, f"The request was cancelled.")
             except Exception as e:                
                 await self.log_system(db, f"UNCAUGHT EXCEPTION! - {str(e)}")
@@ -1625,7 +1639,7 @@ class CriticsGuildButler(discord.Client):
                         tokens_returned_str = f"{self.tokens(token_reward)} were rewarded to {critic_mention}."
                         author_dm_str = f"In the future, you are encourage to engage more with the feedback you were given, and may get {self.tokens(1)} back if you do."
                 
-                if rewardstar:
+                if reward_star:
                     def updatestars(previous):
                         return previous+1
 
@@ -1634,11 +1648,31 @@ class CriticsGuildButler(discord.Client):
                 else:
                     star_str = ""
 
+                # Updated completed requests.
+                query_update_mapper = """
+                    UPDATE user
+                    SET completed_mapper_requests = completed_mapper_requests + 1
+                    WHERE user_id = :mapper_id
+                    """
+                data = {"mapper_id":author_id}
+                res = cur.execute(query_update_mapper,data)
+
+                query_update_critic = """
+                    UPDATE user
+                    SET completed_critic_requests = completed_critic_requests + 1
+                    WHERE user_id = :critic_id
+                    """
+                data = {"critic_id":critic_id}
+                res = cur.execute(query_update_critic,data)
+
                 await self.send_dm(author_obj,f"A trusted critic marked your request {channel_obj.jump_url} as completed by {critic_mention}. If this is an error, please tell a member of Staff. {author_dm_str} Would you recommend {critic_mention} as a critic?",view=self.CompletedVoteCritic(self,thread_id,critic_id))
                 await self.send_dm(critic_obj,f"A trusted critic marked the request {channel_obj.jump_url} by {author_mention} that you responded to as completed. If this is an error, please tell a member of Staff. {critic_dm_str} {star_str} Would you recommend {author_mention} as a good mapper to interact with?",view=self.CompletedVoteMapper(self,thread_id,author_id))
                 await self.send_thread(channel_obj, f"✅{user_mention} marked this request as complete. {tokens_returned_str} Consider upvoting anonymously using the DM that was sent to both of you.",mentions=False)
                 
                 await self.log_result(db,f"{user_mention} marked {channel_obj.jump_url} as completed with notes: {notes}",interaction.user.id,request_id=thread_id,cause_id=command_id)
+
+                starter_message_obj = await channel_obj.fetch_message(interaction.channel_id)
+                await starter_message_obj.add_reaction("✅")
                                 
                 await self.send_response(interaction, f"The request was completed.")
             except Exception as e:                
@@ -1655,7 +1689,7 @@ class CriticsGuildButler(discord.Client):
         @app_commands.checks.has_permissions(manage_guild=True)
         async def ping(interaction: discord.Interaction):
             await self.defer(interaction)
-            await self.send_response(interaction,"Pong.")
+            await self.send_response(interaction,f"Pong. Version info: {butler_version}")
 
         @self.tree.command(description="(Admin only) Make the butler go offline.")
         @app_commands.default_permissions(manage_guild=True)
@@ -1784,6 +1818,58 @@ class CriticsGuildButler(discord.Client):
                     await self.send_admin_channel("No active critic requests")    
                 
                 await self.send_response(interaction,"Command complete.")
+            except Exception as e:                
+                await self.log_system(db, f"UNCAUGHT EXCEPTION! - {str(e)}")
+            
+            db.close()
+
+        @self.tree.command(description="(Admin only) Check open requests.")
+        @app_commands.default_permissions(manage_guild=True)
+        @app_commands.checks.has_permissions(manage_guild=True)        
+        async def checkopenrequests(interaction: discord.Interaction):
+            await self.defer(interaction)
+            if not await self.check_admin_channel(interaction):                    
+                return
+
+            db = self.db_connect()
+
+            try:
+                user_mention = self.mention_user(interaction.user.id)
+                command_id = await self.log_command(db,f"{user_mention} checked the list of open requests.",interaction.user.id)
+                
+                cur = db.cursor()
+
+                query = """
+                    SELECT
+                        r.thread_id,
+                        r.author_id,
+                        r.list,
+                        r.critic_id,
+                        r.type
+                    FROM request r
+                    WHERE r.state IN (:open, :claimed)
+                    """
+                data = {"open": RequestState.OPEN.value, "claimed":RequestState.CLAIMED.value}
+                res = cur.execute(query,data)
+                requests = res.fetchall()
+                
+                await self.send_admin_channel(f"There are {len(requests)} open requests.\n")
+
+                for (thread_id, author_id, list_option_id, critic_id, type_id) in requests:
+                    list_option = RequestList(list_option_id)
+                    request_type = RequestType(type_id)
+
+                    author_mention = self.mention_user(author_id)
+                    if critic_id is None:
+                        critic_mention = ""
+                    else:
+                        critic_mention = f"(reserved by {self.mention_user(critic_id)})"                                
+
+                    request_mention = await self.display_request(thread_id)
+
+                    await self.send_admin_channel(f"{request_mention} by {author_mention} {critic_mention} - In list {list_option}, of type {request_type}.\n")
+                
+                await self.send_response(interaction, "Command complete.")
             except Exception as e:                
                 await self.log_system(db, f"UNCAUGHT EXCEPTION! - {str(e)}")
             
