@@ -2020,11 +2020,8 @@ class CriticsGuildButler(discord.Client):
 
                     multiplier = self.calculate_doubled_tokens(1, date)               
                     
-                    if isinstance(date, str):
-                        date = datetime.datetime.fromisoformat(date)
-
-                    naive = date.replace(tzinfo=None)
-                    delta_creation = datetime.datetime.now() - naive
+                    date = datetime.fromisoformat(date)
+                    delta_creation = datetime.datetime.now() - date
                     days_since_creation = delta_creation.days
 
                     await self.send_channel(channel_obj, f"{multiplier}X{self.tokens(-1)} - {request_mention} by {author_mention} - {days_since_creation} days old.\n", mentions = False)
