@@ -4,7 +4,7 @@ import discord
 import datetime
 import asyncio
 import sys
-from discord import app_commands
+from discord import Forbidden, app_commands
 from discord.ext import tasks
 import sqlite3
 from database import check_user, check_request
@@ -52,6 +52,7 @@ class CriticsGuildButler(discord.Client):
                  critic_list_channel_id, critic_list_tag_ids, critic_list_token_costs, critic_list_token_rewards,
                  trusted_critic_list_channel_id, trusted_critic_list_tag_ids, trusted_critic_list_token_costs, trusted_critic_list_token_rewards,
                  monthly_tokens, max_requests, max_penalties, 
+                 days_double_tokens,
                  print_log=True):      
         intents = discord.Intents.default()
         intents.message_content = True
@@ -78,6 +79,8 @@ class CriticsGuildButler(discord.Client):
         self.monthly_tokens = monthly_tokens
         self.max_requests = max_requests
         self.max_penalties = max_penalties
+
+        self.days_double_tokens = days_double_tokens
 
         self.print_log = print_log
 
@@ -231,6 +234,14 @@ class CriticsGuildButler(discord.Client):
             return f"♻️completed mapper requests"
         else:
             return f"{n}♻️completed mapper requests"            
+
+    def calculate_doubled_tokens(self, n, thread_date):
+        naive = thread_date.replace(tzinfo=None)
+        delta_creation = datetime.datetime.now() - naive
+        days_since_creation = delta_creation.days
+        doubles = days_since_creation // self.days_double_tokens
+        
+        return n*(2**doubles)
 
     ###
     # Discord / database logic and presentation methods
@@ -531,7 +542,7 @@ class CriticsGuildButler(discord.Client):
             await channel.send(content=content, embeds=embeds, allowed_mentions=discord.AllowedMentions(users=[]), **kwargs)
         else:
             await channel.send(content=content, embeds=embeds, **kwargs)
-
+        
     async def send_dm(self, user: discord.User, content = None, embeds = None, mentions = False, **kwargs):
         if not mentions:
             await user.send(content=content, embeds=embeds, allowed_mentions=discord.AllowedMentions(users=[]), **kwargs)
@@ -709,7 +720,10 @@ class CriticsGuildButler(discord.Client):
             if n_tags != 1:
                 await self.log_error(db,f"{user_mention} tried to create a new request with {n_tags} tags applied to it.",thread.owner_id,cause_id=command_id)
                 user = await self.server_obj.fetch_member(thread.owner_id)
-                await self.send_dm(user,f"Your request \"{request_title}\" was deleted because it had {n_tags} tags applied to it. Requests must have exactly 1 tag to be valid, indicating the type of request they are.")
+                try:
+                    await self.send_dm(user,f"Your request \"{request_title}\" was deleted because it had {n_tags} tags applied to it. Requests must have exactly 1 tag to be valid, indicating the type of request they are.")
+                except Forbidden as e:
+                    await self.log_system(db, f"Could not send DM informing user of deleted request due to excessive tags: {e}", cause_id = command_id)
                 await thread.delete()
                 db.close()
                 return
@@ -736,7 +750,10 @@ class CriticsGuildButler(discord.Client):
             if penalties >= self.max_penalties:
                 await self.log_error(db,f"{user_mention} tried to create a new request but they have {self.penalties(penalties)}",thread.owner_id,cause_id=command_id)
                 user = await self.server_obj.fetch_member(thread.owner_id)
-                await self.send_dm(user,f"Your request \"{request_title}\" was deleted because you have {self.penalties(penalties)}. You are not allowed to create requests with these many penalties. If you would like to have penalties removed, contact Staff to understand the reason you received them.")
+                try:
+                    await self.send_dm(user,f"Your request \"{request_title}\" was deleted because you have {self.penalties(penalties)}. You are not allowed to create requests with these many penalties. If you would like to have penalties removed, contact Staff to understand the reason you received them.")
+                except Forbidden as e:
+                    await self.log_system(db, f"Could not send DM informing user of deleted request due to penalties: {e}", cause_id = command_id)
                 await thread.delete()
                 db.close()
                 return
@@ -756,7 +773,10 @@ class CriticsGuildButler(discord.Client):
             if requests >= self.max_requests:
                 await self.log_error(db,f"{user_mention} tried to create a new request but they already have {requests} requests open.",thread.owner_id,cause_id=command_id)
                 user = await self.server_obj.fetch_member(thread.owner_id)
-                await self.send_dm(user,f"Your request \"{request_title}\" was deleted because you already have {requests} requests open. You may not have more than {self.max_requests} requests open at any one time (across all lists). Please wait until one of your requests is completed or cancel an unclaimed request.")
+                try:
+                    await self.send_dm(user,f"Your request \"{request_title}\" was deleted because you already have {requests} requests open. You may not have more than {self.max_requests} requests open at any one time (across all lists). Please wait until one of your requests is completed or cancel an unclaimed request.")
+                except Forbidden as e:
+                    await self.log_system(db, f"Could not send DM informing user of deleted request due to too many active requests: {e}", cause_id = command_id)
                 await thread.delete()
                 db.close()
                 return    
@@ -765,9 +785,12 @@ class CriticsGuildButler(discord.Client):
             thread_id = await self.create_request(db,thread,cause_id=command_id)
             
             # Make a post in the request with basic info.
-            await self.send_thread(thread, f"✅The {thread.applied_tags[0].emoji.name}**{thread.applied_tags[0].name}** request has been registered. {user_mention} now has {requests+1}/{self.max_requests} active requests.",mentions=False)
-            await self.send_thread(thread, f"Requests cannot be reserved in the open list, but anybody may express their interest in responding to this request.",mentions=False)
-            await self.send_thread(thread, f"❌{user_mention} may cancel the request if nobody has responded to it by using `/cancelrequest`.",mentions=False)
+            try:
+                await self.send_thread(thread, f"✅The {thread.applied_tags[0].emoji.name}**{thread.applied_tags[0].name}** request has been registered. {user_mention} now has {requests+1}/{self.max_requests} active requests.",mentions=False)
+                await self.send_thread(thread, f"Requests cannot be reserved in the open list, but anybody may express their interest in responding to this request. Responding to this request will reward {self.tokens(1)}.",mentions=False)
+                await self.send_thread(thread, f"❌{user_mention} may cancel the request if nobody has responded to it by using `/cancelrequest`.",mentions=False)
+            except Forbidden as e:
+                await self.log_system(db, f"Could not send messages in thread: {e}", cause_id = command_id)
             #if not has_attachment:
             #    await self.send_thread(thread,f"⚠️No attachment was detected on the original message. If this is a mistake, please remember to attach your map file now. Ignore if attachment isn't necessary.",mentions=False)
 
@@ -793,7 +816,10 @@ class CriticsGuildButler(discord.Client):
             if n_tags != 1:
                 await self.log_error(db,f"{user_mention} tried to create a new request with {n_tags} tags applied to it.",thread.owner_id,cause_id=command_id)
                 user = await self.server_obj.fetch_member(thread.owner_id)
-                await self.send_dm(user,f"Your request \"{request_title}\" was deleted because it had {n_tags} tags applied to it. Requests must have exactly 1 tag to be valid, indicating the type of request they are.")
+                try:
+                    await self.send_dm(user,f"Your request \"{request_title}\" was deleted because it had {n_tags} tags applied to it. Requests must have exactly 1 tag to be valid, indicating the type of request they are.")
+                except Forbidden as e:
+                    await self.log_system(db, f"Could not send DM informing user of deleted request due to excessive tags: {e}", cause_id = command_id)
                 await thread.delete()
                 db.close()
                 return
@@ -818,7 +844,10 @@ class CriticsGuildButler(discord.Client):
             if penalties >= self.max_penalties:
                 await self.log_error(db,f"{user_mention} tried to create a new request but they have {self.penalties(penalties)}",thread.owner_id,cause_id=command_id)
                 user = await self.server_obj.fetch_member(thread.owner_id)
-                await self.send_dm(user,f"Your request \"{request_title}\" was deleted because you have {self.penalties(penalties)}. You are not allowed to create requests with these many penalties. If you would like to have penalties removed, contact Staff to understand the reason you received them.")
+                try:
+                    await self.send_dm(user,f"Your request \"{request_title}\" was deleted because you have {self.penalties(penalties)}. You are not allowed to create requests with these many penalties. If you would like to have penalties removed, contact Staff to understand the reason you received them.")
+                except Forbidden as e:
+                    await self.log_system(db, f"Could not send DM informing user of deleted request due to penalties: {e}", cause_id = command_id)
                 await thread.delete()
                 db.close()
                 return
@@ -838,7 +867,10 @@ class CriticsGuildButler(discord.Client):
             if requests >= self.max_requests:
                 await self.log_error(db,f"{user_mention} tried to create a new request but they already have {requests} requests open.",thread.owner_id,cause_id=command_id)
                 user = await self.server_obj.fetch_member(thread.owner_id)
-                await self.send_dm(user,f"Your request \"{request_title}\" was deleted because you already have {requests} requests open. You may not have more than {self.max_requests} requests open at any one time (across all lists). Please wait until one of your requests is completed or cancel an unclaimed request.")
+                try:
+                    await self.send_dm(user,f"Your request \"{request_title}\" was deleted because you already have {requests} requests open. You may not have more than {self.max_requests} requests open at any one time (across all lists). Please wait until one of your requests is completed or cancel an unclaimed request.")
+                except Forbidden as e:
+                    await self.log_system(db, f"Could not send DM informing user of deleted request due to too many active requests: {e}", cause_id = command_id)
                 await thread.delete()
                 db.close()
                 return    
@@ -850,8 +882,11 @@ class CriticsGuildButler(discord.Client):
             token_reward = self.critic_list_token_rewards[request_type.value - 1]
             if tokens < token_cost:
                 await self.log_error(db,f"{user_mention} tried to create a new request of type {request_type} but they only have {self.tokens(tokens)} and require {self.tokens(token_cost)}",thread.owner_id,cause_id=command_id)
-                user = await self.server_obj.fetch_member(thread.owner_id)
-                await self.send_dm(user,f"Your request \"{request_title}\" was deleted because you only have {self.tokens(tokens)} and require {self.tokens(token_cost)} to create a request of this type in the critics list.")
+                user = await self.server_obj.fetch_member(thread.owner_id) 
+                try:
+                    await self.send_dm(user,f"Your request \"{request_title}\" was deleted because you only have {self.tokens(tokens)} and require {self.tokens(token_cost)} to create a request of this type in the critics list.")
+                except Forbidden as e:
+                    await self.log_system(db, f"Could not send DM informing user of deleted request due to insufficient tokens: {e}", cause_id = command_id)
                 await thread.delete()
                 db.close()
                 return
@@ -863,9 +898,12 @@ class CriticsGuildButler(discord.Client):
             await self.update_tokens(db,thread.owner_id,token_update,request_id=thread_id,cause_id=command_id)
             
             # Make a post in the request with basic info.
-            await self.send_thread(thread, f"✅The {thread.applied_tags[0].emoji.name}**{thread.applied_tags[0].name}** request has been registered. {user_mention} consumed {self.tokens(token_cost)}. {user_mention} now has {requests+1}/{self.max_requests} active requests.",mentions=False)
-            await self.send_thread(thread, f"Only critics may respond to requests in this list. Critics interested in responding to this request should reserve it with `/reserverequest`. Responding to this request will reward {self.tokens(token_reward)}.",mentions=False)
-            await self.send_thread(thread, f"❌{user_mention} may cancel the request if nobody has responded to it by using `/cancelrequest`.",mentions=False)
+            try:
+                await self.send_thread(thread, f"✅The {thread.applied_tags[0].emoji.name}**{thread.applied_tags[0].name}** request has been registered. {user_mention} consumed {self.tokens(token_cost)}. {user_mention} now has {requests+1}/{self.max_requests} active requests.",mentions=False)
+                await self.send_thread(thread, f"Only critics may respond to requests in this list. Critics interested in responding to this request should reserve it with `/reserverequest`. Responding to this request will reward {self.tokens(token_reward)}.",mentions=False)
+                await self.send_thread(thread, f"❌{user_mention} may cancel the request if nobody has responded to it by using `/cancelrequest`.",mentions=False)
+            except Forbidden as e:
+                await self.log_system(db, f"Could not send messages in thread: {e}", cause_id = command_id)
             #if not has_attachment:
             #    await self.send_thread(thread,f"⚠️No attachment was detected on the original message. If this is a mistake, please remember to attach your map file now. Ignore if attachment isn't necessary.",mentions=False)
 
@@ -891,7 +929,10 @@ class CriticsGuildButler(discord.Client):
             if n_tags != 1:
                 await self.log_error(db,f"{user_mention} tried to create a new request with {n_tags} tags applied to it.",thread.owner_id,cause_id=command_id)
                 user = await self.server_obj.fetch_member(thread.owner_id)
-                await self.send_dm(user,f"Your request \"{request_title}\" was deleted because it had {n_tags} tags applied to it. Requests must have exactly 1 tag to be valid, indicating the type of request they are.")
+                try:
+                    await self.send_dm(user,f"Your request \"{request_title}\" was deleted because it had {n_tags} tags applied to it. Requests must have exactly 1 tag to be valid, indicating the type of request they are.")
+                except Forbidden as e:
+                    await self.log_system(db, f"Could not send DM informing user of deleted request due to excessive tags: {e}", cause_id = command_id)
                 await thread.delete()
                 db.close()
                 return
@@ -916,7 +957,10 @@ class CriticsGuildButler(discord.Client):
             if penalties >= self.max_penalties:
                 await self.log_error(db,f"{user_mention} tried to create a new request but they have {self.penalties(penalties)}",thread.owner_id,cause_id=command_id)
                 user = await self.server_obj.fetch_member(thread.owner_id)
-                await self.send_dm(user,f"Your request \"{request_title}\" was deleted because you have {self.penalties(penalties)}. You are not allowed to create requests with these many penalties. If you would like to have penalties removed, contact Staff to understand the reason you received them.")
+                try:
+                    await self.send_dm(user,f"Your request \"{request_title}\" was deleted because you have {self.penalties(penalties)}. You are not allowed to create requests with these many penalties. If you would like to have penalties removed, contact Staff to understand the reason you received them.")
+                except Forbidden as e:
+                    await self.log_system(db, f"Could not send DM informing user of deleted request due to penalties: {e}", cause_id = command_id)
                 await thread.delete()
                 db.close()
                 return
@@ -936,7 +980,10 @@ class CriticsGuildButler(discord.Client):
             if requests >= self.max_requests:
                 await self.log_error(db,f"{user_mention} tried to create a new request but they already have {requests} requests open.",thread.owner_id,cause_id=command_id)
                 user = await self.server_obj.fetch_member(thread.owner_id)
-                await self.send_dm(user,f"Your request \"{request_title}\" was deleted because you already have {requests} requests open. You may not have more than {self.max_requests} requests open at any one time (across all lists). Please wait until one of your requests is completed or cancel an unclaimed request.")
+                try:
+                    await self.send_dm(user,f"Your request \"{request_title}\" was deleted because you already have {requests} requests open. You may not have more than {self.max_requests} requests open at any one time (across all lists). Please wait until one of your requests is completed or cancel an unclaimed request.")
+                except Forbidden as e:
+                    await self.log_system(db, f"Could not send DM informing user of deleted request due to too many active requests: {e}", cause_id = command_id)
                 await thread.delete()
                 db.close()
                 return    
@@ -949,7 +996,10 @@ class CriticsGuildButler(discord.Client):
             if tokens < token_cost:
                 await self.log_error(db,f"{user_mention} tried to create a new request of type {request_type} but they only have {self.tokens(tokens)} and require {self.tokens(token_cost)}",thread.owner_id,cause_id=command_id)
                 user = await self.server_obj.fetch_member(thread.owner_id)
-                await self.send_dm(user,f"Your request \"{request_title}\" was deleted because you only have {self.tokens(tokens)} and require {self.tokens(token_cost)} to create a request of this type in the trusted critics list.")
+                try:
+                    await self.send_dm(user,f"Your request \"{request_title}\" was deleted because you only have {self.tokens(tokens)} and require {self.tokens(token_cost)} to create a request of this type in the trusted critics list.")
+                except Forbidden as e:
+                    await self.log_system(db, f"Could not send DM informing user of deleted request due to insufficient tokens: {e}", cause_id = command_id)
                 await thread.delete()
                 db.close()
                 return
@@ -961,9 +1011,12 @@ class CriticsGuildButler(discord.Client):
             await self.update_tokens(db,thread.owner_id,token_update,request_id=thread_id,cause_id=command_id)
             
             # Make a post in the request with basic info.
-            await self.send_thread(thread, f"✅The {thread.applied_tags[0].emoji.name}**{thread.applied_tags[0].name}** request has been registered. {user_mention} consumed {self.tokens(token_cost)}. {user_mention} now has {requests+1}/{self.max_requests} active requests.",mentions=False)
-            await self.send_thread(thread, f"Only trusted critics may respond to requests in this list. Trusted critics interested in responding to this request should reserve it with `/reserverequest`. Responding to this request will reward {self.tokens(token_reward)}.",mentions=False)
-            await self.send_thread(thread, f"❌{user_mention} may cancel the request if nobody has responded to it by using `/cancelrequest`.",mentions=False)
+            try:
+                await self.send_thread(thread, f"✅The {thread.applied_tags[0].emoji.name}**{thread.applied_tags[0].name}** request has been registered. {user_mention} consumed {self.tokens(token_cost)}. {user_mention} now has {requests+1}/{self.max_requests} active requests.",mentions=False)
+                await self.send_thread(thread, f"Only trusted critics may respond to requests in this list. Trusted critics interested in responding to this request should reserve it with `/reserverequest`. Responding to this request will reward {self.tokens(token_reward)}.",mentions=False)
+                await self.send_thread(thread, f"❌{user_mention} may cancel the request if nobody has responded to it by using `/cancelrequest`.",mentions=False)
+            except Forbidden as e:
+                await self.log_system(db, f"Could not send messages in thread: {e}", cause_id = command_id)
             #if not has_attachment:
             #    await self.send_thread(thread,f"⚠️No attachment was detected on the original message. If this is a mistake, please remember to attach your map file now. Ignore if attachment isn't necessary.",mentions=False)
 
@@ -1036,7 +1089,10 @@ class CriticsGuildButler(discord.Client):
             await self.log_result(db,f"A thread initiated by {user_mention} was deleted, and the associated request was cancelled.",thread.owner_id,request_id=thread_id,cause_id=command_id)
                             
             user = await self.server_obj.fetch_member(thread.owner_id)
-            await self.send_dm(user,f"A request thread you created on the critic's guild was deleted. {tokens_returned_str}This should not be the norm, if it was you who deleted the thread, please do not do this in the future as it can create issues. Instead, use `/cancelrequest`. If it was not you who deleted the thread, consider letting a member of Staff know of the issue.")
+            try:
+                await self.send_dm(user,f"A request thread you created on the critic's guild was deleted. {tokens_returned_str}This should not be the norm, if it was you who deleted the thread, please do not do this in the future as it can create issues. Instead, use `/cancelrequest`. If it was not you who deleted the thread, consider letting a member of Staff know of the issue.")
+            except Forbidden as e:
+                await self.log_system(db, f"Could not send DM informing user of deleted thread: {e}", cause_id = command_id)
         except Exception as e:                
             await self.log_system(db, f"UNCAUGHT EXCEPTION! - {str(e)}")
             
@@ -1152,7 +1208,10 @@ class CriticsGuildButler(discord.Client):
                 (previous_self_tokens, new_self_tokens) = await self.update_tokens(db,interaction.user.id,reduce_tokens_fun,cause_id=command_id)
                 (previous_other_tokens, new_other_tokens) = await self.update_tokens(db,user.id,increase_tokens_fun,cause_id=command_id)
 
-                await self.send_dm(user, f"{user_mention} gifted you {self.tokens(tokens)} and you now have {self.tokens(new_other_tokens)} in total.")
+                try:
+                    await self.send_dm(user, f"{user_mention} gifted you {self.tokens(tokens)} and you now have {self.tokens(new_other_tokens)} in total.")
+                except Forbidden as e:
+                    await self.log_system(db, f"Could not send DM informing user of token gift: {e}", cause_id = command_id)
                 await self.send_response(interaction, f"You gifted {self.tokens(tokens)} to {target_user_mention}, and now have {self.tokens(new_self_tokens)} left. Very kind of you!")
             except Exception as e:                
                 await self.log_system(db, f"UNCAUGHT EXCEPTION! - {str(e)}")
@@ -1294,9 +1353,15 @@ class CriticsGuildButler(discord.Client):
                     tokens_returned_str = f"{self.tokens(token_cost)} were returned to {author_mention}."
                 
                 # Lock the thread
-                await self.send_thread(channel_obj, f"❌{user_mention} cancelled this request. {tokens_returned_str}",mentions=False)
+                try:
+                    await self.send_thread(channel_obj, f"❌{user_mention} cancelled this request. {tokens_returned_str}",mentions=False)
+                except Forbidden as e:
+                    await self.log_system(db, f"Could not send message in thread: {e}", cause_id = command_id)
                 starter_message_obj = await channel_obj.fetch_message(interaction.channel_id)
-                await starter_message_obj.add_reaction("🛑")                
+                try:
+                    await starter_message_obj.add_reaction("🛑")                
+                except Forbidden as e:
+                    await self.log_system(db, f"Could not react to message: {e}", cause_id = command_id)
                 await channel_obj.edit(locked=True,archived=True)
                 
                 await self.log_result(db,f"{user_mention} cancelled {channel_obj.jump_url} with reason: {reason}",interaction.user.id,request_id=thread_id,cause_id=command_id)
@@ -1375,7 +1440,10 @@ class CriticsGuildButler(discord.Client):
                 cur.execute(query_update,data)
 
                 await self.log_result(db,f"{user_mention} reserved {channel_obj.jump_url}",interaction.user.id,thread_id,cause_id=command_id)
-                await self.send_thread(channel_obj, f"{user_mention} has reserved this request, and should respond to it within the next week.")
+                try:
+                    await self.send_thread(channel_obj, f"{user_mention} has reserved this request, and should respond to it within the next week.")
+                except Forbidden as e:
+                    await self.log_system(db, f"Could not send message in thread: {e}", cause_id = command_id)
                 await self.send_response(interaction, f"You reserved the request. Respond to it within the next week or release it if you will not be able to do so with `/releaserequest`.")
             except Exception as e:                
                 await self.log_system(db, f"UNCAUGHT EXCEPTION! - {str(e)}")
@@ -1442,7 +1510,10 @@ class CriticsGuildButler(discord.Client):
                 critic_mention = self.mention_user(critic_id)
 
                 await self.log_result(db,f"{critic_mention} was released from {channel_obj.jump_url}",critic_id,thread_id,cause_id=command_id)
-                await self.send_thread(channel_obj, f"{user_mention} has released this request. It may now be reserved by another critic, or cancelled.")
+                try:
+                    await self.send_thread(channel_obj, f"{user_mention} has released this request. It may now be reserved by another critic, or cancelled.")
+                except Forbidden as e:
+                    await self.log_system(db, f"Could not send message in thread: {e}", cause_id = command_id)
                 await self.send_response(interaction, f"You released the request.")
             except Exception as e:                
                 await self.log_system(db, f"UNCAUGHT EXCEPTION! - {str(e)}")
@@ -1487,7 +1558,10 @@ class CriticsGuildButler(discord.Client):
                 (previous_tokens, new_tokens) = await self.update_tokens(db,user.id,increase_tokens_fun,cause_id=command_id)
 
                 await self.send_response(interaction, f"You rewarded {target_user_mention} {self.tokens(tokens)}.")
-                await self.send_dm(user, f"A trusted critic rewarded you {self.tokens(tokens)} and you now have {self.tokens(new_tokens)} in total. Reason: {reason}")
+                try:
+                    await self.send_dm(user, f"A trusted critic rewarded you {self.tokens(tokens)} and you now have {self.tokens(new_tokens)} in total. Reason: {reason}")
+                except Forbidden as e:
+                    await self.log_system(db, f"Could not send DM informing user of rewarded tokens: {e}", cause_id = command_id)
             except Exception as e:                
                 await self.log_system(db, f"UNCAUGHT EXCEPTION! - {str(e)}")
             
@@ -1521,7 +1595,10 @@ class CriticsGuildButler(discord.Client):
                 (previous_stars, new_stars) = await self.update_stars(db,user.id,increase_stars_fun,cause_id=command_id)
 
                 await self.send_response(interaction, f"You rewarded {target_user_mention} {self.stars(1)}.")                
-                await self.send_dm(user, f"A trusted critic rewarded you {self.stars(1)} with reason: {reason}")
+                try:
+                    await self.send_dm(user, f"A trusted critic rewarded you {self.stars(1)} with reason: {reason}")
+                except Forbidden as e:
+                    await self.log_system(db, f"Could not send DM informing user of rewarded stars: {e}", cause_id = command_id)
             except Exception as e:                
                 await self.log_system(db, f"UNCAUGHT EXCEPTION! - {str(e)}")
             
@@ -1606,12 +1683,20 @@ class CriticsGuildButler(discord.Client):
                 def token_update_mapper(previous):
                     return previous + 1
 
+                creation_date = channel_obj.created_at                                
+
                 if list_option == RequestList.OPEN:
-                    tokens_returned_str = ""
+                    # Always 1 token for all requests in open list
+                    token_reward = self.calculate_doubled_tokens(1,creation_date)
+
+                    await self.update_tokens(db,critic_id,token_update_critic,request_id=thread_id,cause_id=command_id)
+
+                    critic_dm_str = f"You received {self.tokens(token_reward)} as reward."
+
+                    tokens_returned_str = f"{self.tokens(token_reward)} were rewarded to {critic_mention}."
                     author_dm_str = ""
-                    critic_dm_str = ""
                 elif list_option == RequestList.CRITIC:
-                    token_reward = self.critic_list_token_rewards[request_type.value - 1]                   
+                    token_reward = self.calculate_doubled_tokens(self.critic_list_token_rewards[request_type.value - 1],creation_date)
 
                     await self.update_tokens(db,critic_id,token_update_critic,request_id=thread_id,cause_id=command_id)
 
@@ -1623,9 +1708,9 @@ class CriticsGuildButler(discord.Client):
                         author_dm_str = f"You received {self.tokens(1)} back for good engagement with the feedback."
                     else:
                         tokens_returned_str = f"{self.tokens(token_reward)} were rewarded to {critic_mention}."
-                        author_dm_str = f"In the future, you are encourage to engage more with the feedback you were given, and may get {self.tokens(1)} back if you do."
+                        author_dm_str = f"In the future, you are encouraged to engage more with the feedback you were given, and may get {self.tokens(1)} back if you do."
                 elif list_option == RequestList.TRUSTED_CRITIC:
-                    token_reward = self.trusted_critic_list_token_rewards[request_type.value - 1]                   
+                    token_reward = self.calculate_doubled_tokens(self.trusted_critic_list_token_rewards[request_type.value - 1],creation_date)
 
                     await self.update_tokens(db,critic_id,token_update_critic,request_id=thread_id,cause_id=command_id)
 
@@ -1637,7 +1722,7 @@ class CriticsGuildButler(discord.Client):
                         author_dm_str = f"You received {self.tokens(1)} back for good engagement with the feedback."
                     else:
                         tokens_returned_str = f"{self.tokens(token_reward)} were rewarded to {critic_mention}."
-                        author_dm_str = f"In the future, you are encourage to engage more with the feedback you were given, and may get {self.tokens(1)} back if you do."
+                        author_dm_str = f"In the future, you are encouraged to engage more with the feedback you were given, and may get {self.tokens(1)} back if you do."
                 
                 if reward_star:
                     def updatestars(previous):
@@ -1665,14 +1750,28 @@ class CriticsGuildButler(discord.Client):
                 data = {"critic_id":critic_id}
                 res = cur.execute(query_update_critic,data)
 
-                await self.send_dm(author_obj,f"A trusted critic marked your request {channel_obj.jump_url} as completed by {critic_mention}. If this is an error, please tell a member of Staff. {author_dm_str} Would you recommend {critic_mention} as a critic?",view=self.CompletedVoteCritic(self,thread_id,critic_id))
-                await self.send_dm(critic_obj,f"A trusted critic marked the request {channel_obj.jump_url} by {author_mention} that you responded to as completed. If this is an error, please tell a member of Staff. {critic_dm_str} {star_str} Would you recommend {author_mention} as a good mapper to interact with?",view=self.CompletedVoteMapper(self,thread_id,author_id))
-                await self.send_thread(channel_obj, f"✅{user_mention} marked this request as complete. {tokens_returned_str} Consider upvoting anonymously using the DM that was sent to both of you.",mentions=False)
+                try:
+                    await self.send_dm(author_obj,f"A trusted critic marked your request {channel_obj.jump_url} as completed by {critic_mention}. If this is an error, please tell a member of Staff. {author_dm_str} Would you recommend {critic_mention} as a critic?",view=self.CompletedVoteCritic(self,thread_id,critic_id))
+                except Forbidden as e:
+                    await self.log_system(db, f"Could not send DM informing user of completed request: {e}", cause_id = command_id)
+
+                try:
+                    await self.send_dm(critic_obj,f"A trusted critic marked the request {channel_obj.jump_url} by {author_mention} that you responded to as completed. If this is an error, please tell a member of Staff. {critic_dm_str} {star_str} Would you recommend {author_mention} as a good mapper to interact with?",view=self.CompletedVoteMapper(self,thread_id,author_id))
+                except Forbidden as e:
+                    await self.log_system(db, f"Could not send DM informing user of completed request: {e}", cause_id = command_id)
+
+                try:
+                    await self.send_thread(channel_obj, f"✅{user_mention} marked this request as complete. {tokens_returned_str} Consider upvoting anonymously using the DM that was sent to both of you.",mentions=False)
+                except Forbidden as e:
+                    await self.log_system(db, f"Could not send message in thread: {e}", cause_id = command_id)
                 
                 await self.log_result(db,f"{user_mention} marked {channel_obj.jump_url} as completed with notes: {notes}",interaction.user.id,request_id=thread_id,cause_id=command_id)
 
                 starter_message_obj = await channel_obj.fetch_message(interaction.channel_id)
-                await starter_message_obj.add_reaction("✅")
+                try:
+                    await starter_message_obj.add_reaction("✅")
+                except Forbidden as e:
+                    await self.log_system(db, f"Could not react to message: {e}", cause_id = command_id)
                                 
                 await self.send_response(interaction, f"The request was completed.")
             except Exception as e:                

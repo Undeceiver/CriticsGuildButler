@@ -29,6 +29,7 @@ trusted_critic_list_token_rewards = list(json.loads(os.getenv("TRUSTED_CRITIC_LI
 monthly_tokens = int(os.getenv("MONTHLY_TOKENS"))
 max_requests = int(os.getenv("MAX_REQUESTS"))
 max_penalties = int(os.getenv("MAX_PENALTIES"))
+days_double_tokens = int(os.getenv("DAYS_DOUBLE_TOKENS"))
 
 bot = CriticsGuildButler(db_connect=connect,
                         server_ids=server_ids,
@@ -49,6 +50,7 @@ bot = CriticsGuildButler(db_connect=connect,
                         monthly_tokens=monthly_tokens,
                         max_requests=max_requests,
                         max_penalties=max_penalties,
+                        days_double_tokens=days_double_tokens,
                         print_log=True)
 
 token = os.getenv("DISCORD_TOKEN")
