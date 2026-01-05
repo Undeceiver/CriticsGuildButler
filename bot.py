@@ -2018,9 +2018,9 @@ class CriticsGuildButler(discord.Client):
 
                     request_mention = await self.display_request(thread_id)
 
-                    multiplier = self.calculate_doubled_tokens(1, date)               
-                    
                     date = datetime.fromisoformat(date)
+                    multiplier = self.calculate_doubled_tokens(1, date)                                   
+                    
                     delta_creation = datetime.datetime.now() - date
                     days_since_creation = delta_creation.days
 
