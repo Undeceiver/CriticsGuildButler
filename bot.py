@@ -2020,7 +2020,10 @@ class CriticsGuildButler(discord.Client):
 
                     multiplier = self.calculate_doubled_tokens(1, date)               
                     
-                    naive = datetime.fromisoformat(date).replace(tzinfo=None)
+                    if isinstance(date, str):
+                        date = datetime.datetime.fromisoformat(date)
+
+                    naive = date.replace(tzinfo=None)
                     delta_creation = datetime.datetime.now() - naive
                     days_since_creation = delta_creation.days
 
