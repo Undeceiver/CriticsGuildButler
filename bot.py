@@ -12,7 +12,7 @@ import textwrap
 
 from enum import Enum
 
-butler_version = "V2. Updated 2025/10/11."
+butler_version = "V3. Updated 2026/01/05."
 
 class LogClass(Enum):
     SYSTEM = 1
@@ -1974,6 +1974,64 @@ class CriticsGuildButler(discord.Client):
             
             db.close()
 
+        @self.tree.command(description="(Admin only) Display old request wanted board.")
+        @app_commands.default_permissions(manage_guild=True)
+        @app_commands.checks.has_permissions(manage_guild=True)        
+        async def wantedrequests(interaction: discord.Interaction):
+            await self.defer(interaction)            
+            db = self.db_connect()
+
+            try:
+                user_mention = self.mention_user(interaction.user.id)
+                channel_obj = await self.server_obj.fetch_channel(interaction.channel_id)                
+                channel_mention = channel_obj.jump_url
+                command_id = await self.log_command(db,f"{user_mention} displayed the old request wanted board in {channel_mention}.",interaction.user.id)
+                
+                cur = db.cursor()
+
+                # We need to use log timestamps because we did not add creation date to the request table...
+                # Could add it in the future but would need to update existing stuff.
+                query = """
+                    SELECT
+                        r.thread_id,
+                        r.author_id,
+                        r.list,
+                        r.critic_id,
+                        r.type,
+                        (SELECT MIN(l.timestamp) FROM log l WHERE l.request_id = r.thread_id) AS date
+                    FROM request r
+                    WHERE r.state IN (:open)
+                        AND (julianday('now') - (SELECT MIN(julianday(l.timestamp)) FROM log l WHERE l.request_id = r.thread_id)) > :days
+                    ORDER BY (SELECT MIN(julianday(l.timestamp)) FROM log l WHERE l.request_id = r.thread_id) ASC
+                    """
+                data = {"open": RequestState.OPEN.value, "days": self.days_double_tokens}
+                res = cur.execute(query,data)
+                requests = res.fetchall()
+                
+                await self.send_channel(channel_obj, f"‼️WANTED‼️ - Responses to old requests ({len(requests)}) - Extra {self.tokens(-1)} rewards")
+
+                for (thread_id, author_id, list_option_id, critic_id, type_id, date) in requests:
+                    #list_option = RequestList(list_option_id)
+                    #request_type = RequestType(type_id)
+
+                    author_mention = self.mention_user(author_id)                    
+
+                    request_mention = await self.display_request(thread_id)
+
+                    multiplier = self.calculate_doubled_tokens(1, date)               
+                    
+                    naive = date.replace(tzinfo=None)
+                    delta_creation = datetime.datetime.now() - naive
+                    days_since_creation = delta_creation.days
+
+                    await self.send_channel(channel_obj, f"{multiplier}X{self.tokens(-1)} - {request_mention} by {author_mention} - {days_since_creation} days old.\n", mentions = False)
+                
+                await self.send_response(interaction, "Command complete.")
+            except Exception as e:                
+                await self.log_system(db, f"UNCAUGHT EXCEPTION! - {str(e)}")
+            
+            db.close()
+
         @self.tree.command(description="(Admin only) Check user log.")
         @app_commands.default_permissions(manage_guild=True)
         @app_commands.checks.has_permissions(manage_guild=True)
@@ -2415,17 +2473,19 @@ class CriticsGuildButler(discord.Client):
         @app_commands.describe(max_critics="Maximum number of critics to show.")
         async def starleaderboard(interaction: discord.Interaction, max_critics:int = 10, historic: bool = False):
             await self.defer(interaction)
-            if not await self.check_admin_channel(interaction):                    
-                return
+            #if not await self.check_admin_channel(interaction):                    
+            #    return
 
             db = self.db_connect()
 
             try:
                 user_mention = self.mention_user(interaction.user.id)
+                channel_obj = await self.server_obj.fetch_channel(interaction.channel_id)                
+                channel_mention = channel_obj.jump_url
                 if historic:
-                    message = f"{user_mention} checked the **historic** {self.stars(-1)} leaderboard (maximum of {max_critics} critics)."
+                    message = f"{user_mention} displayed the **historic** {self.stars(-1)} leaderboard (maximum of {max_critics} critics) in {channel_mention}."
                 else:
-                    message = f"{user_mention} checked the {self.stars(-1)} leaderboard (maximum of {max_critics} critics)."
+                    message = f"{user_mention} displayed the {self.stars(-1)} leaderboard (maximum of {max_critics} critics) in {channel_mention}."
 
                 command_id = await self.log_command(db,message,interaction.user.id)
                 
@@ -2456,12 +2516,14 @@ class CriticsGuildButler(discord.Client):
                 res = cur.execute(query,data)
                 critics = res.fetchall()                                
                                 
+                await self.send_channel(channel_obj, f"⭐STAR LEADERBOARD⭐ - TOP {max_critics}")
+
                 i = 0
                 for critic in critics:
                     i += 1
                     (user_id, stars, historic_stars) = critic
                     critic_mention = self.mention_user(user_id)
-                    await self.send_admin_channel(f"{i} - {critic_mention} - {self.stars(stars)} / {self.stars(historic_stars)} (historic)")
+                    await self.send_channel(channel_obj, f"{i} - {critic_mention} - {self.stars(stars)}", mentions = True)
                 
                 await self.send_response(interaction, "Command complete.")
             except Exception as e:                
@@ -2475,17 +2537,19 @@ class CriticsGuildButler(discord.Client):
         @app_commands.describe(max_critics="Maximum number of critics to show.")
         async def criticupvoteleaderboard(interaction: discord.Interaction, max_critics:int = 10, historic: bool = False):
             await self.defer(interaction)
-            if not await self.check_admin_channel(interaction):                    
-                return
+            #if not await self.check_admin_channel(interaction):                    
+            #    return
 
             db = self.db_connect()
 
             try:
                 user_mention = self.mention_user(interaction.user.id)
+                channel_obj = await self.server_obj.fetch_channel(interaction.channel_id)                
+                channel_mention = channel_obj.jump_url
                 if historic:
-                    message = f"{user_mention} checked the **historic** critic {self.upvotes(-1)} leaderboard (maximum of {max_critics} critics)."
+                    message = f"{user_mention} checked the **historic** critic {self.upvotes(-1)} leaderboard (maximum of {max_critics} critics) in {channel_mention}."
                 else:
-                    message = f"{user_mention} checked the critic {self.upvotes(-1)} leaderboard (maximum of {max_critics} critics)."
+                    message = f"{user_mention} checked the critic {self.upvotes(-1)} leaderboard (maximum of {max_critics} critics) in {channel_mention}."
 
                 command_id = await self.log_command(db,message,interaction.user.id)
                 
@@ -2516,12 +2580,14 @@ class CriticsGuildButler(discord.Client):
                 res = cur.execute(query,data)
                 critics = res.fetchall()                                
                                 
+                await self.send_channel(channel_obj, f"👍UPVOTE LEADERBOARD👍 - TOP {max_critics}")
+
                 i = 0
                 for critic in critics:
                     i += 1
                     (user_id, critic_upvotes, historic_critic_upvotes) = critic
                     critic_mention = self.mention_user(user_id)
-                    await self.send_admin_channel(f"{i} - {critic_mention} - {self.upvotes(critic_upvotes)} / {self.upvotes(historic_critic_upvotes)} (historic)")
+                    await self.send_channel(channel_obj, f"{i} - {critic_mention} - {self.upvotes(critic_upvotes)}", mentions = True)
                 
                 await self.send_response(interaction, "Command complete.")
             except Exception as e:                
@@ -2535,17 +2601,19 @@ class CriticsGuildButler(discord.Client):
         @app_commands.describe(max_mappers="Maximum number of mappers to show.")
         async def mapperupvoteleaderboard(interaction: discord.Interaction, max_mappers:int = 10, historic: bool = False):
             await self.defer(interaction)
-            if not await self.check_admin_channel(interaction):                    
-                return
+            #if not await self.check_admin_channel(interaction):                    
+            #    return
 
             db = self.db_connect()
 
             try:
                 user_mention = self.mention_user(interaction.user.id)
+                channel_obj = await self.server_obj.fetch_channel(interaction.channel_id)                
+                channel_mention = channel_obj.jump_url
                 if historic:
-                    message = f"{user_mention} checked the **historic** mapper {self.upvotes(-1)} leaderboard (maximum of {max_mappers} mappers)."
+                    message = f"{user_mention} checked the **historic** mapper {self.upvotes(-1)} leaderboard (maximum of {max_mappers} mappers) in {channel_mention}."
                 else:
-                    message = f"{user_mention} checked the mapper {self.upvotes(-1)} leaderboard (maximum of {max_mappers} mappers)."
+                    message = f"{user_mention} checked the mapper {self.upvotes(-1)} leaderboard (maximum of {max_mappers} mappers) in {channel_mention}."
 
                 command_id = await self.log_command(db,message,interaction.user.id)
                 
@@ -2574,14 +2642,16 @@ class CriticsGuildButler(discord.Client):
                 
                 data = {"max_mappers":max_mappers}
                 res = cur.execute(query,data)
-                mappers = res.fetchall()                                
+                mappers = res.fetchall()             
+                
+                await self.send_channel(channel_obj, f"👍UPVOTE LEADERBOARD👍 - TOP {max_mappers} mappers")
                                 
                 i = 0
                 for mapper in mappers:
                     i += 1
                     (user_id, mapper_upvotes, historic_mapper_upvotes) = mapper
                     mapper_mention = self.mention_user(user_id)
-                    await self.send_admin_channel(f"{i} - {mapper_mention} - {self.upvotes(mapper_upvotes)} / {self.upvotes(historic_mapper_upvotes)} (historic)")
+                    await self.send_channel(channel_obj, f"{i} - {mapper_mention} - {self.upvotes(mapper_upvotes)}", mentions = True)
                 
                 await self.send_response(interaction, "Command complete.")
             except Exception as e:                
@@ -2594,15 +2664,17 @@ class CriticsGuildButler(discord.Client):
         @app_commands.checks.has_permissions(manage_guild=True)
         @app_commands.describe(max_critics="Maximum number of critics to show.")
         async def criticcompletionleaderboard(interaction: discord.Interaction, max_critics:int = 10):
-            await self.defer(interaction)
-            if not await self.check_admin_channel(interaction):                    
-                return
+            await self.defer(interaction)            
+            #if not await self.check_admin_channel(interaction):                    
+            #    return
 
             db = self.db_connect()
 
             try:
                 user_mention = self.mention_user(interaction.user.id)
-                message = f"{user_mention} checked the critic completed requests leaderboard (maximum of {max_critics} critics)."
+                channel_obj = await self.server_obj.fetch_channel(interaction.channel_id)                
+                channel_mention = channel_obj.jump_url
+                message = f"{user_mention} checked the critic completed requests leaderboard (maximum of {max_critics} critics) in {channel_mention}."
 
                 command_id = await self.log_command(db,message,interaction.user.id)
                 
@@ -2619,14 +2691,16 @@ class CriticsGuildButler(discord.Client):
                 
                 data = {"max_critics":max_critics}
                 res = cur.execute(query,data)
-                critics = res.fetchall()                                
+                critics = res.fetchall() 
+                
+                await self.send_channel(channel_obj, f"✅COMPLETION LEADERBOARD✅ - TOP {max_critics}")
                                 
                 i = 0
                 for critic in critics:
                     i += 1
                     (user_id, critic_requests) = critic
                     critic_mention = self.mention_user(user_id)
-                    await self.send_admin_channel(f"{i} - {critic_mention} - {critic_requests} completed critic requests")
+                    await self.send_channel(channel_obj, f"{i} - {critic_mention} - {critic_requests} completed requests", mentions = True)
                 
                 await self.send_response(interaction, "Command complete.")
             except Exception as e:                
@@ -2640,14 +2714,16 @@ class CriticsGuildButler(discord.Client):
         @app_commands.describe(max_mappers="Maximum number of mappers to show.")
         async def mappercompletionleaderboard(interaction: discord.Interaction, max_mappers:int = 10):
             await self.defer(interaction)
-            if not await self.check_admin_channel(interaction):                    
-                return
+            #if not await self.check_admin_channel(interaction):                    
+            #    return
 
             db = self.db_connect()
 
             try:
                 user_mention = self.mention_user(interaction.user.id)
-                message = f"{user_mention} checked the mapper completed requests leaderboard (maximum of {max_mappers} critics)."
+                channel_obj = await self.server_obj.fetch_channel(interaction.channel_id)                
+                channel_mention = channel_obj.jump_url
+                message = f"{user_mention} checked the mapper completed requests leaderboard (maximum of {max_mappers} critics) in {channel_mention}."
 
                 command_id = await self.log_command(db,message,interaction.user.id)
                 
@@ -2664,14 +2740,16 @@ class CriticsGuildButler(discord.Client):
                 
                 data = {"max_mappers":max_mappers}
                 res = cur.execute(query,data)
-                mappers = res.fetchall()                                
+                mappers = res.fetchall()       
+                
+                await self.send_channel(channel_obj, f"✅COMPLETION LEADERBOARD✅ - TOP {max_mappers} mappers")
                                 
                 i = 0
                 for mapper in mappers:
                     i += 1
                     (user_id, mapper_requests) = mapper
                     mapper_mention = self.mention_user(user_id)
-                    await self.send_admin_channel(f"{i} - {mapper_mention} - {mapper_requests} completed mapper requests")
+                    await self.send_channel(channel_obj, f"{i} - {mapper_mention} - {mapper_requests} completed requests", mentions = True)
                 
                 await self.send_response(interaction, "Command complete.")
             except Exception as e:                
