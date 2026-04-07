@@ -787,7 +787,7 @@ class CriticsGuildButler(discord.Client):
             # Make a post in the request with basic info.
             try:
                 await self.send_thread(thread, f"✅The {thread.applied_tags[0].emoji.name}**{thread.applied_tags[0].name}** request has been registered. {user_mention} now has {requests+1}/{self.max_requests} active requests.",mentions=False)
-                await self.send_thread(thread, f"Requests cannot be reserved in the open list, but anybody may express their interest in responding to this request. Responding to this request will reward {self.tokens(1)}.",mentions=False)
+                await self.send_thread(thread, f"Responding to this request will reward {self.tokens(1)}.",mentions=False)
                 await self.send_thread(thread, f"❌{user_mention} may cancel the request if nobody has responded to it by using `/cancelrequest`.",mentions=False)
             except Forbidden as e:
                 await self.log_system(db, f"Could not send messages in thread: {e}", cause_id = command_id)
@@ -900,7 +900,7 @@ class CriticsGuildButler(discord.Client):
             # Make a post in the request with basic info.
             try:
                 await self.send_thread(thread, f"✅The {thread.applied_tags[0].emoji.name}**{thread.applied_tags[0].name}** request has been registered. {user_mention} consumed {self.tokens(token_cost)}. {user_mention} now has {requests+1}/{self.max_requests} active requests.",mentions=False)
-                await self.send_thread(thread, f"Only critics may respond to requests in this list. Critics interested in responding to this request should reserve it with `/reserverequest`. Responding to this request will reward {self.tokens(token_reward)}.",mentions=False)
+                await self.send_thread(thread, f"Only critics may respond to requests in this list. Responding to this request will reward {self.tokens(token_reward)}.",mentions=False)
                 await self.send_thread(thread, f"❌{user_mention} may cancel the request if nobody has responded to it by using `/cancelrequest`.",mentions=False)
             except Forbidden as e:
                 await self.log_system(db, f"Could not send messages in thread: {e}", cause_id = command_id)
@@ -1013,7 +1013,7 @@ class CriticsGuildButler(discord.Client):
             # Make a post in the request with basic info.
             try:
                 await self.send_thread(thread, f"✅The {thread.applied_tags[0].emoji.name}**{thread.applied_tags[0].name}** request has been registered. {user_mention} consumed {self.tokens(token_cost)}. {user_mention} now has {requests+1}/{self.max_requests} active requests.",mentions=False)
-                await self.send_thread(thread, f"Only trusted critics may respond to requests in this list. Trusted critics interested in responding to this request should reserve it with `/reserverequest`. Responding to this request will reward {self.tokens(token_reward)}.",mentions=False)
+                await self.send_thread(thread, f"Only trusted critics may respond to requests in this list. Responding to this request will reward {self.tokens(token_reward)}.",mentions=False)
                 await self.send_thread(thread, f"❌{user_mention} may cancel the request if nobody has responded to it by using `/cancelrequest`.",mentions=False)
             except Forbidden as e:
                 await self.log_system(db, f"Could not send messages in thread: {e}", cause_id = command_id)
@@ -1375,150 +1375,7 @@ class CriticsGuildButler(discord.Client):
         ###
         # Critics
         ###
-        
-        @self.tree.command(description=f"(Critics only) Reserve this request to respond to it within the next week.")        
-        async def reserverequest(interaction: discord.Interaction):
-            await self.defer(interaction)
-            
-            db = self.db_connect()            
-
-            try:
-                user_mention = self.mention_user(interaction.user.id)
-                channel_obj = await self.server_obj.fetch_channel(interaction.channel_id)
-                command_id = await self.log_command(db,f"{user_mention} attempted to reserve {channel_obj.jump_url}",interaction.user.id)
-                                
-                if not await self.check_critic(db, interaction, command_name="/reserverequest", cause_id = command_id):
-                    db.close()
-                    return
-
-                if not check_request(db,interaction.channel_id):
-                    await self.log_error(db,f"{user_mention} tried to reserve the request {channel_obj.jump_url} but the request could not be found in the database.",interaction.user.id,cause_id=command_id)
-                    await self.send_response(interaction,f"This channel does not appear in the database as a request.")
-                    db.close()
-                    return                              
-                                                 
-                cur = db.cursor()
-
-                thread_id = interaction.channel_id                
-
-                query_request = """
-                    SELECT r.state, r.list
-                    FROM request r
-                    WHERE r.thread_id = ?
-                    """
-                res = cur.execute(query_request,(thread_id,))
-                (state_id,list_id) = res.fetchone()
-                state = RequestState(state_id)
-                list_option = RequestList(list_id)
                 
-                # Check the list
-                if list_option == RequestList.OPEN:
-                    await self.log_error(db, f"{user_mention} tried to reserve {channel_obj.jump_url} but this is an open list request.",interaction.user.id,request_id=thread_id,cause_id=command_id)
-                    await self.send_response(interaction, f"You cannot reserve requests in the open list.")
-                    db.close()
-                    return        
-                
-                if list_option == RequestList.TRUSTED_CRITIC and (not any(role.id == self.trusted_critic_role_id for role in interaction.user.roles)):
-                    await self.log_error(db, f"{user_mention} tried to reserve {channel_obj.jump_url} in the trusted critic list, but they are not a trusted critic.",interaction.user.id,request_id=thread_id,cause_id=command_id)
-                    await self.send_response(interaction, f"You are not allowed to reserve requests in the trusted critic list.")
-                    db.close()
-                    return
-
-                # Check the state of the request
-                if state != RequestState.OPEN:
-                    await self.log_error(db, f"{user_mention} tried to reserve {channel_obj.jump_url} but the request is not in open state.",interaction.user.id,request_id=thread_id,cause_id=command_id)
-                    await self.send_response(interaction, f"You cannot reserve this request because it is not in open state.")
-                    db.close()
-                    return
-
-                query_update = """
-                    UPDATE request
-                    SET state = :claimed_state, critic_id = :critic_id
-                    WHERE thread_id = :thread_id
-                    """
-                data = {"claimed_state":RequestState.CLAIMED.value, "critic_id":interaction.user.id, "thread_id":thread_id}
-                cur.execute(query_update,data)
-
-                await self.log_result(db,f"{user_mention} reserved {channel_obj.jump_url}",interaction.user.id,thread_id,cause_id=command_id)
-                try:
-                    await self.send_thread(channel_obj, f"{user_mention} has reserved this request, and should respond to it within the next week.")
-                except Forbidden as e:
-                    await self.log_system(db, f"Could not send message in thread: {e}", cause_id = command_id)
-                await self.send_response(interaction, f"You reserved the request. Respond to it within the next week or release it if you will not be able to do so with `/releaserequest`.")
-            except Exception as e:                
-                await self.log_system(db, f"UNCAUGHT EXCEPTION! - {str(e)}")
-            
-            db.close()
-
-        @self.tree.command(description=f"(Critics only) Release this request so that other critics can respond to it.")        
-        async def releaserequest(interaction: discord.Interaction):
-            await self.defer(interaction)
-            
-            db = self.db_connect()            
-
-            try:
-                user_mention = self.mention_user(interaction.user.id)
-                channel_obj = await self.server_obj.fetch_channel(interaction.channel_id)
-                command_id = await self.log_command(db,f"{user_mention} attempted to release {channel_obj.jump_url}",interaction.user.id)
-                                
-                if not await self.check_critic(db, interaction, command_name="/releaserequest", cause_id = command_id):
-                    db.close()
-                    return
-
-                if not check_request(db,interaction.channel_id):
-                    await self.log_error(db,f"{user_mention} tried to release the request {channel_obj.jump_url} but the request could not be found in the database.",interaction.user.id,cause_id=command_id)
-                    await self.send_response(interaction,f"This channel does not appear in the database as a request.")
-                    db.close()
-                    return                              
-                                                 
-                cur = db.cursor()
-
-                thread_id = interaction.channel_id                
-
-                query_request = """
-                    SELECT r.state, r.list, r.critic_id
-                    FROM request r
-                    WHERE r.thread_id = ?
-                    """
-                res = cur.execute(query_request,(thread_id,))
-                (state_id,list_id,critic_id) = res.fetchone()
-                state = RequestState(state_id)
-                list_option = RequestList(list_id)                              
-
-                # Check the state of the request
-                if state != RequestState.CLAIMED:
-                    await self.log_error(db, f"{user_mention} tried to release {channel_obj.jump_url} but the request is not in claimed state.",interaction.user.id,request_id=thread_id,cause_id=command_id)
-                    await self.send_response(interaction, f"You cannot release this request because it is not in reserved state.")
-                    db.close()
-                    return
-
-                # Check they are the reserved critic, or a trusted critic
-                if critic_id != interaction.user.id and (not any(role.id == self.trusted_critic_role_id for role in interaction.user.roles)):
-                    await self.log_error(db, f"{user_mention} tried to release {channel_obj.jump_url} but they are not the critic that claimed the request (or a trusted critic).",interaction.user.id,request_id=thread_id,cause_id=command_id)
-                    await self.send_response(interaction, f"You cannot release this request because you did not reserve it.")
-                    db.close()
-                    return
-
-                query_update = """
-                    UPDATE request
-                    SET state = :open_state, critic_id = NULL
-                    WHERE thread_id = :thread_id
-                    """
-                data = {"open_state":RequestState.OPEN.value, "thread_id":thread_id}
-                cur.execute(query_update,data)
-
-                critic_mention = self.mention_user(critic_id)
-
-                await self.log_result(db,f"{critic_mention} was released from {channel_obj.jump_url}",critic_id,thread_id,cause_id=command_id)
-                try:
-                    await self.send_thread(channel_obj, f"{user_mention} has released this request. It may now be reserved by another critic, or cancelled.")
-                except Forbidden as e:
-                    await self.log_system(db, f"Could not send message in thread: {e}", cause_id = command_id)
-                await self.send_response(interaction, f"You released the request.")
-            except Exception as e:                
-                await self.log_system(db, f"UNCAUGHT EXCEPTION! - {str(e)}")
-            
-            db.close()
 
         ###
         # Trusted critics
@@ -1605,7 +1462,7 @@ class CriticsGuildButler(discord.Client):
             db.close()
 
         @self.tree.command(description=f"(Trusted critics only) Mark request as completed.")
-        @app_commands.describe(critic=f"If the critic did not reserve the request.", notes=f"Anything else to add.")
+        @app_commands.describe(critic=f"Who completed the request.", notes=f"Anything else to add.")
         async def completerequest(interaction: discord.Interaction, critic: discord.Member, notes: str = ""):
             await self.defer(interaction)
             
@@ -1653,6 +1510,7 @@ class CriticsGuildButler(discord.Client):
 
                     critic_id = critic.id
                 elif state == RequestState.CLAIMED:
+                    await self.log_error(db, f"Request in CLAIMED state??? This should not happen in this version of the bot!")
                     if not critic is None and critic.id != critic_id:
                         await self.log_error(db, f"{user_mention} tried to complete {channel_obj.jump_url} but the request is claimed and the user indicated a critic.",interaction.user.id,request_id=thread_id,cause_id=command_id)
                         await self.send_response(interaction, f"You indicated a critic different from the one that has reserved this request. You don't need to indicate the critic if the request is reserved. Make sure the critic is right.")
@@ -1934,15 +1792,11 @@ class CriticsGuildButler(discord.Client):
                     list_option = RequestList(list_option_id)
                     request_type = RequestType(type_id)
 
-                    author_mention = self.mention_user(author_id)
-                    if critic_id is None:
-                        critic_mention = ""
-                    else:
-                        critic_mention = f"(reserved by {self.mention_user(critic_id)})"                                
+                    author_mention = self.mention_user(author_id)                    
 
                     request_mention = await self.display_request(thread_id)
 
-                    await self.send_admin_channel(f"{request_mention} by {author_mention} {critic_mention} - In list {list_option}, of type {request_type}.\n")
+                    await self.send_admin_channel(f"{request_mention} by {author_mention} - In list {list_option}, of type {request_type}.\n")
                 
                 await self.send_response(interaction, "Command complete.")
             except Exception as e:                
