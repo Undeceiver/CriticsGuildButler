@@ -1605,8 +1605,8 @@ class CriticsGuildButler(discord.Client):
             db.close()
 
         @self.tree.command(description=f"(Trusted critics only) Mark request as completed.")
-        @app_commands.describe(return_tokens_mapper=f"The mapper interacted properly and will get {self.tokens(1)} back.", reward_star=f"The feedback given by the critic was very good and deserving of {self.stars(1)}. (Only in some cases)", critic=f"If the critic did not reserve the request.", notes=f"Anything else to add.")
-        async def completerequest(interaction: discord.Interaction, return_tokens_mapper: bool, reward_star: bool, critic: discord.Member = None, notes: str = ""):
+        @app_commands.describe(critic=f"If the critic did not reserve the request.", notes=f"Anything else to add.")
+        async def completerequest(interaction: discord.Interaction, critic: discord.Member, notes: str = ""):
             await self.defer(interaction)
             
             db = self.db_connect()
@@ -1679,10 +1679,7 @@ class CriticsGuildButler(discord.Client):
                 # Return tokens
                 def token_update_critic(previous):
                     return previous + token_reward
-
-                def token_update_mapper(previous):
-                    return previous + 1
-
+                
                 creation_date = channel_obj.created_at                                
 
                 if list_option == RequestList.OPEN:
@@ -1693,8 +1690,7 @@ class CriticsGuildButler(discord.Client):
 
                     critic_dm_str = f"You received {self.tokens(token_reward)} as reward."
 
-                    tokens_returned_str = f"{self.tokens(token_reward)} were rewarded to {critic_mention}."
-                    author_dm_str = ""
+                    tokens_returned_str = f"{self.tokens(token_reward)} were rewarded to {critic_mention}."                    
                 elif list_option == RequestList.CRITIC:
                     token_reward = self.calculate_doubled_tokens(self.critic_list_token_rewards[request_type.value - 1],creation_date)
 
@@ -1702,13 +1698,7 @@ class CriticsGuildButler(discord.Client):
 
                     critic_dm_str = f"You received {self.tokens(token_reward)} as reward."
 
-                    if return_tokens_mapper:
-                        await self.update_tokens(db,author_id,token_update_mapper,request_id=thread_id,cause_id=command_id)                        
-                        tokens_returned_str = f"{self.tokens(token_reward)} were rewarded to {critic_mention} and {self.tokens(1)} were returned to {author_mention} for good engagement."
-                        author_dm_str = f"You received {self.tokens(1)} back for good engagement with the feedback."
-                    else:
-                        tokens_returned_str = f"{self.tokens(token_reward)} were rewarded to {critic_mention}."
-                        author_dm_str = f"In the future, you are encouraged to engage more with the feedback you were given, and may get {self.tokens(1)} back if you do."
+                    tokens_returned_str = f"{self.tokens(token_reward)} were rewarded to {critic_mention}."                    
                 elif list_option == RequestList.TRUSTED_CRITIC:
                     token_reward = self.calculate_doubled_tokens(self.trusted_critic_list_token_rewards[request_type.value - 1],creation_date)
 
@@ -1716,23 +1706,9 @@ class CriticsGuildButler(discord.Client):
 
                     critic_dm_str = f"You received {self.tokens(token_reward)} as reward."
 
-                    if return_tokens_mapper:
-                        await self.update_tokens(db,author_id,token_update_mapper,request_id=thread_id,cause_id=command_id)                        
-                        tokens_returned_str = f"{self.tokens(token_reward)} were rewarded to {critic_mention} and {self.tokens(1)} were returned to {author_mention} for good engagement."
-                        author_dm_str = f"You received {self.tokens(1)} back for good engagement with the feedback."
-                    else:
-                        tokens_returned_str = f"{self.tokens(token_reward)} were rewarded to {critic_mention}."
-                        author_dm_str = f"In the future, you are encouraged to engage more with the feedback you were given, and may get {self.tokens(1)} back if you do."
+                    tokens_returned_str = f"{self.tokens(token_reward)} were rewarded to {critic_mention}."                    
                 
-                if reward_star:
-                    def updatestars(previous):
-                        return previous+1
-
-                    await self.update_stars(db,critic_id,updatestars,request_id=thread_id,cause_id=command_id)
-                    star_str = f"You were also awarded {self.stars(1)} for good feedback!"
-                else:
-                    star_str = ""
-
+                
                 # Updated completed requests.
                 query_update_mapper = """
                     UPDATE user
@@ -1751,12 +1727,12 @@ class CriticsGuildButler(discord.Client):
                 res = cur.execute(query_update_critic,data)
 
                 try:
-                    await self.send_dm(author_obj,f"A trusted critic marked your request {channel_obj.jump_url} as completed by {critic_mention}. If this is an error, please tell a member of Staff. {author_dm_str} Would you recommend {critic_mention} as a critic?",view=self.CompletedVoteCritic(self,thread_id,critic_id))
+                    await self.send_dm(author_obj,f"A trusted critic marked your request {channel_obj.jump_url} as completed by {critic_mention}. If this is an error, please tell a member of Staff. Would you recommend {critic_mention} as a critic?",view=self.CompletedVoteCritic(self,thread_id,critic_id))
                 except Forbidden as e:
                     await self.log_system(db, f"Could not send DM informing user of completed request: {e}", cause_id = command_id)
 
                 try:
-                    await self.send_dm(critic_obj,f"A trusted critic marked the request {channel_obj.jump_url} by {author_mention} that you responded to as completed. If this is an error, please tell a member of Staff. {critic_dm_str} {star_str} Would you recommend {author_mention} as a good mapper to interact with?",view=self.CompletedVoteMapper(self,thread_id,author_id))
+                    await self.send_dm(critic_obj,f"A trusted critic marked the request {channel_obj.jump_url} by {author_mention} that you responded to as completed. If this is an error, please tell a member of Staff. {critic_dm_str} Would you recommend {author_mention} as a good mapper to interact with?",view=self.CompletedVoteMapper(self,thread_id,author_id))
                 except Forbidden as e:
                     await self.log_system(db, f"Could not send DM informing user of completed request: {e}", cause_id = command_id)
 
