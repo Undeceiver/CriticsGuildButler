@@ -30,6 +30,7 @@ monthly_tokens = int(os.getenv("MONTHLY_TOKENS"))
 max_requests = int(os.getenv("MAX_REQUESTS"))
 max_penalties = int(os.getenv("MAX_PENALTIES"))
 days_double_tokens = int(os.getenv("DAYS_DOUBLE_TOKENS"))
+react_sleep = int(os.getenv("REACT_SLEEP"))
 
 bot = CriticsGuildButler(db_connect=connect,
                         server_ids=server_ids,
@@ -51,6 +52,7 @@ bot = CriticsGuildButler(db_connect=connect,
                         max_requests=max_requests,
                         max_penalties=max_penalties,
                         days_double_tokens=days_double_tokens,
+                        react_sleep=react_sleep,
                         print_log=True)
 
 token = os.getenv("DISCORD_TOKEN")

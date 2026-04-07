@@ -4,6 +4,7 @@ import discord
 import datetime
 import asyncio
 import sys
+import time
 from discord import Forbidden, app_commands
 from discord.ext import tasks
 import sqlite3
@@ -53,6 +54,7 @@ class CriticsGuildButler(discord.Client):
                  trusted_critic_list_channel_id, trusted_critic_list_tag_ids, trusted_critic_list_token_costs, trusted_critic_list_token_rewards,
                  monthly_tokens, max_requests, max_penalties, 
                  days_double_tokens,
+                 react_sleep,
                  print_log=True):      
         intents = discord.Intents.default()
         intents.message_content = True
@@ -81,6 +83,8 @@ class CriticsGuildButler(discord.Client):
         self.max_penalties = max_penalties
 
         self.days_double_tokens = days_double_tokens
+
+        self.react_sleep = react_sleep
 
         self.print_log = print_log
 
@@ -488,7 +492,7 @@ class CriticsGuildButler(discord.Client):
 
         return thread_id
 
-    async def process_thread(self, thread: discord.Thread):
+    async def process_thread(self, thread: discord.Thread):        
         if thread.parent_id == self.open_list_channel_id:
             await self.newopenrequest(thread)
         elif thread.parent_id == self.critic_list_channel_id:
@@ -496,7 +500,7 @@ class CriticsGuildButler(discord.Client):
         elif thread.parent_id == self.trusted_critic_list_channel_id:
             await self.newtrustedcriticrequest(thread)
 
-    async def process_thread_deleted(self, thread: discord.Thread):
+    async def process_thread_deleted(self, thread: discord.Thread):        
         if thread.parent_id == self.open_list_channel_id:
             await self.deleterequest(thread)
         elif thread.parent_id == self.critic_list_channel_id:
@@ -504,12 +508,15 @@ class CriticsGuildButler(discord.Client):
         elif thread.parent_id == self.trusted_critic_list_channel_id:
             await self.deletecrequest(thread)
 
-    async def process_message(self, message: discord.Message):
+    async def process_message(self, message: discord.Message):        
         if message.author.id == self.bot_id:
             return
         if isinstance(message.channel,discord.Thread):
             if message.channel.parent_id == self.critic_list_channel_id and (message.author.id != message.channel.owner_id) and (not any((role.id == self.trusted_critic_role_id or role.id == self.critic_role_id) for role in message.author.roles)):
-                await self.send_dm(message.author,f"Your message in {message.channel.jump_url} was deleted because only critics may respond to requests by other users in the critics list.")
+                try:
+                    await self.send_dm(message.author,f"Your message in {message.channel.jump_url} was deleted because only critics may respond to requests by other users in the critics list.")
+                except Forbidden as e:
+                    await self.log_system(db, f"Could not send DM informing user of deleted message: {e}")
                 await message.delete()
 
                 db = self.db_connect()
@@ -520,7 +527,10 @@ class CriticsGuildButler(discord.Client):
                 db.close()
                 return
             if message.channel.parent_id == self.trusted_critic_list_channel_id and (message.author.id != message.channel.owner_id) and (not any((role.id == self.trusted_critic_role_id) for role in message.author.roles)):
-                await self.send_dm(message.author,f"Your message in {message.channel.jump_url} was deleted because only trusted critics may respond to requests by other users in the trusted critics list.")
+                try:
+                    await self.send_dm(message.author,f"Your message in {message.channel.jump_url} was deleted because only trusted critics may respond to requests by other users in the trusted critics list.")
+                except Forbidden as e:
+                    await self.log_system(db, f"Could not send DM informing user of deleted message: {e}")
                 await message.delete()
                 
                 db = self.db_connect()
@@ -704,6 +714,8 @@ class CriticsGuildButler(discord.Client):
     # Reactions to events
     ###
     async def newopenrequest(self, thread: discord.Thread):
+        time.sleep(self.react_sleep)
+
         db = self.db_connect()
 
         try:
@@ -800,6 +812,8 @@ class CriticsGuildButler(discord.Client):
         db.close()
 
     async def newcriticrequest(self, thread: discord.Thread):
+        time.sleep(self.react_sleep)
+
         db = self.db_connect()
 
         try:
@@ -913,6 +927,8 @@ class CriticsGuildButler(discord.Client):
         db.close()
 
     async def newtrustedcriticrequest(self, thread: discord.Thread):
+        time.sleep(self.react_sleep)
+
         db = self.db_connect()
 
         try:
@@ -1026,6 +1042,8 @@ class CriticsGuildButler(discord.Client):
         db.close()
 
     async def deleterequest(self, thread: discord.Thread):
+        time.sleep(self.react_sleep)
+
         db = self.db_connect()
 
         try:            
