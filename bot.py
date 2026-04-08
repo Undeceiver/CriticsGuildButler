@@ -178,8 +178,8 @@ class CriticsGuildButler(discord.Client):
             if interaction.message.flags.ephemeral:
                 await interaction.response.edit_message(view=None)
             else:
-                await interaction.message.edit(view=None)         
-
+                await interaction.message.edit(view=None)              
+    
     async def on_thread_create(self, thread: discord.Thread):
         await self.process_thread(thread)
 
@@ -252,28 +252,41 @@ class CriticsGuildButler(discord.Client):
         if days_since_creation < self.days_double_tokens:
             return n
         else:
-            return n+(n*days_since_creation) // self.days_double_tokens
-
-    def calculate_request_tokens(self, list_option, request_type, creation_date):
-        if list_option == RequestList.OPEN:
-            # Always 1 token for all requests in open list
-            token_reward = self.calculate_cumulative_tokens(1,creation_date)            
-        elif list_option == RequestList.CRITIC:
-            token_reward = self.calculate_cumulative_tokens(self.critic_list_token_rewards[request_type.value - 1],creation_date)
-        elif list_option == RequestList.TRUSTED_CRITIC:
-            token_reward = self.calculate_cumulative_tokens(self.trusted_critic_list_token_rewards[request_type.value - 1],creation_date)
-
-        return token_reward
+            return n+(n*days_since_creation) // self.days_double_tokens    
 
     ###
     # Discord / database logic and presentation methods
     ###
-
+        
     async def display_request(self, thread_id):
         thread:discord.Thread = await self.fetch_channel(thread_id)
 
         # For now we just provide the link.
         return thread.jump_url    
+
+    async def update_tokens_request(self, db, request_id, update_fun, cause_id = None, **kwargs):
+        cur = db.cursor()
+
+        query = """
+            SELECT
+                r.additional_tokens
+            FROM request r
+            WHERE r.thread_id = ?
+            """
+        res = cur.execute(query,(request_id,))
+        previous_tokens = res.fetchone()[0]
+
+        new_tokens = update_fun(previous_tokens)
+
+        query_update = """
+            UPDATE request
+            SET additional_tokens = :tokens
+            WHERE thread_id = :request_id
+        """
+        data = {"tokens":new_tokens, "request_id":request_id}
+        cur.execute(query_update,data)
+
+        return (previous_tokens,new_tokens)
 
     async def update_tokens(self, db, user_id, update_fun, request_id = None, cause_id = None, **kwargs):
         cur = db.cursor()
@@ -509,6 +522,30 @@ class CriticsGuildButler(discord.Client):
         await self.log_result(db,f"{user_mention} created request {thread.jump_url} of {request_type} in {list_option}.",thread.owner_id,request_id=thread_id,cause_id=cause_id)
 
         return thread_id
+
+    async def calculate_request_tokens(self, db, thread_id):
+        cur = db.cursor()
+
+        query_request = """
+                    SELECT r.list,r.type,r.additional_tokens
+                    FROM request r
+                    WHERE r.thread_id = ?
+                    """
+        res = cur.execute(query_request,(thread_id,))
+        (list_option_id,request_type_id,additional_tokens) = res.fetchone()
+        list_option = RequestList(list_option_id)
+        request_type = RequestType(request_type_id)
+        channel_obj = await self.server_obj.fetch_channel(thread_id)
+        creation_date = channel_obj.created_at                                
+        if list_option == RequestList.OPEN:
+            # Always 1 token for all requests in open list
+            token_reward = self.calculate_cumulative_tokens(1,creation_date)+additional_tokens
+        elif list_option == RequestList.CRITIC:
+            token_reward = self.calculate_cumulative_tokens(self.critic_list_token_rewards[request_type.value - 1],creation_date)+additional_tokens
+        elif list_option == RequestList.TRUSTED_CRITIC:
+            token_reward = self.calculate_cumulative_tokens(self.trusted_critic_list_token_rewards[request_type.value - 1],creation_date)+additional_tokens
+
+        return token_reward
 
     async def process_thread(self, thread: discord.Thread):        
         if thread.parent_id == self.open_list_channel_id:
@@ -843,7 +880,7 @@ class CriticsGuildButler(discord.Client):
             # Make a post in the request with basic info.
             try:
                 await self.send_thread(thread, f"✅The {thread.applied_tags[0].emoji.name}**{thread.applied_tags[0].name}** request has been registered. {user_mention} now has {requests+1}/{self.max_requests} active requests.",mentions=False)
-                await self.send_thread(thread, f"Responding to this request will reward {self.tokens(1)}.",mentions=False)
+                await self.send_thread(thread, f"Responding to this request will reward {self.tokens(1)}. {user_mention} may increase the token reward using `/addtokens`.",mentions=False)
                 await self.send_thread(thread, f"Possible actions for {user_mention}:\n- ✅Accept response and give reward - `/thanksforfeedback`\n- ✅Close request as finished - `/closerequest`\n- ❌Cancel the request (no responses) - `/cancelrequest`",mentions=False)
             except Forbidden as e:
                 await self.log_system(db, f"Could not send messages in thread: {e}", cause_id = command_id)
@@ -958,7 +995,7 @@ class CriticsGuildButler(discord.Client):
             # Make a post in the request with basic info.
             try:
                 await self.send_thread(thread, f"✅The {thread.applied_tags[0].emoji.name}**{thread.applied_tags[0].name}** request has been registered. {user_mention} consumed {self.tokens(token_cost)}. {user_mention} now has {requests+1}/{self.max_requests} active requests.",mentions=False)
-                await self.send_thread(thread, f"Only critics may respond to requests in this list. Responding to this request will reward {self.tokens(token_reward)}.",mentions=False)
+                await self.send_thread(thread, f"Only critics may respond to requests in this list. Responding to this request will reward {self.tokens(token_reward)}. {user_mention} may increase the token reward using `/addtokens`.",mentions=False)
                 await self.send_thread(thread, f"Possible actions for {user_mention}:\n- ✅Accept response and give reward - `/thanksforfeedback`\n- ✅Close request as finished - `/closerequest`\n- ❌Cancel the request (no responses) - `/cancelrequest`",mentions=False)
             except Forbidden as e:
                 await self.log_system(db, f"Could not send messages in thread: {e}", cause_id = command_id)
@@ -1073,7 +1110,7 @@ class CriticsGuildButler(discord.Client):
             # Make a post in the request with basic info.
             try:
                 await self.send_thread(thread, f"✅The {thread.applied_tags[0].emoji.name}**{thread.applied_tags[0].name}** request has been registered. {user_mention} consumed {self.tokens(token_cost)}. {user_mention} now has {requests+1}/{self.max_requests} active requests.",mentions=False)
-                await self.send_thread(thread, f"Only trusted critics may respond to requests in this list. Responding to this request will reward {self.tokens(token_reward)}.",mentions=False)
+                await self.send_thread(thread, f"Only trusted critics may respond to requests in this list. Responding to this request will reward {self.tokens(token_reward)}. {user_mention} may increase the token reward using `/addtokens`.",mentions=False)
                 await self.send_thread(thread, f"Possible actions for {user_mention}:\n- ✅Accept response and give reward - `/thanksforfeedback`\n- ✅Close request as finished - `/closerequest`\n- ❌Cancel the request (no responses) - `/cancelrequest`",mentions=False)
             except Forbidden as e:
                 await self.log_system(db, f"Could not send messages in thread: {e}", cause_id = command_id)
@@ -1167,6 +1204,90 @@ class CriticsGuildButler(discord.Client):
         ###
         # All users
         ###
+        @self.tree.command(description=f"Add additional token rewards to this request.")
+        @app_commands.describe(tokens=f"How many tokens you wish to add")
+        async def addtokens(interaction: discord.Interaction, tokens: int):
+            await self.defer(interaction)
+            
+            db = self.db_connect()
+
+            try:
+                user_mention = self.mention_user(interaction.user.id)                
+                channel_obj = await self.server_obj.fetch_channel(interaction.channel_id)
+                command_id = await self.log_command(db,f"{user_mention} tried to add {self.tokens(tokens)} to {channel_obj.jump_url}.",interaction.user.id)
+                
+                if not check_request(db,interaction.channel_id):
+                    await self.log_error(db,f"{user_mention} tried to add tokens to {channel_obj.jump_url} but the request could not be found in the database.",interaction.user.id,cause_id=command_id)
+                    await self.send_response(interaction,f"This channel does not appear in the database as a request.")
+                    db.close()
+                    return
+
+                if not await self.check_request_owner(db, interaction, command_name="/addtokens", cause_id = command_id):
+                    db.close()
+                    return
+
+                cur = db.cursor()
+
+                thread_id = interaction.channel_id
+
+                query_request = """
+                    SELECT r.author_id,r.state,r.list,r.type
+                    FROM request r
+                    WHERE r.thread_id = ?
+                    """
+                res = cur.execute(query_request,(thread_id,))
+                (author_id,state_id,list_option_id,request_type_id) = res.fetchone()
+                state = RequestState(state_id)
+                list_option = RequestList(list_option_id)
+                request_type = RequestType(request_type_id)
+                author_mention = self.mention_user(author_id)   
+                author_obj = await self.fetch_user(author_id)
+
+                if tokens <= 0:
+                    await self.log_error(db, summary=f"{user_mention} tried to add negative tokens to a request.", user_id=interaction.user.id,cause_id=command_id)
+                    await self.send_response(interaction,f"Please introduce a positive amount of {self.tokens(-1)} to add.")
+                    db.close()
+                    return
+
+                query_available_tokens = """
+                    SELECT
+                        u.tokens
+                    FROM user u
+                    WHERE u.user_id = ?
+                """
+                res = cur.execute(query_available_tokens,(interaction.user.id,))
+                available_tokens = res.fetchone()[0]
+
+                if available_tokens < tokens:
+                    await self.log_error(db, summary=f"{user_mention} tried to add {self.tokens(tokens)} to {channel_obj.jump_url} but they only had {self.tokens(available_tokens)} available.", user_id=interaction.user.id,cause_id=command_id)
+                    await self.send_response(interaction,content=f"You only have {self.tokens(available_tokens)}.")                    
+                    db.close()
+                    return
+
+                def reduce_tokens_fun(previous):
+                    return previous - tokens
+
+                def increase_tokens_fun(previous):
+                    return previous + tokens
+
+                (previous_self_tokens, new_self_tokens) = await self.update_tokens(db,interaction.user.id,reduce_tokens_fun,cause_id=command_id)
+                (previous_request_tokens, new_request_tokens) = await self.update_tokens_request(db,thread_id,increase_tokens_fun,cause_id=command_id)
+
+                total_request_tokens = await self.calculate_request_tokens(db, thread_id)
+
+                try:
+                    await self.send_thread(channel_obj, f"📈{user_mention} added {self.tokens(tokens)} reward for responding to this request. Current total reward: {self.tokens(total_request_tokens)}",mentions=False)
+                except Forbidden as e:
+                    await self.log_system(db, f"Could not send message in thread: {e}", cause_id = command_id)
+                
+                await self.log_result(db,f"{user_mention} added {self.tokens(tokens)} to the reward of {channel_obj.jump_url}.",interaction.user.id,request_id=thread_id,cause_id=command_id)
+                
+                await self.send_response(interaction, f"{self.tokens(tokens)} added to the request reward. You now have {self.tokens(new_self_tokens)} left.")            
+            except Exception as e:                
+                await self.log_system(db, f"UNCAUGHT EXCEPTION! - {str(e)}")
+            
+            db.close()
+
         @self.tree.command(description=f"Acknowledge a critic's feedback and give them a reward.")
         @app_commands.describe(critic=f"The person who gave you feedback.", close=f"`True` if you wish to close this request. `False` if you wish to leave it open.")
         async def thanksforfeedback(interaction: discord.Interaction, critic: discord.Member, close: bool):
@@ -1232,7 +1353,7 @@ class CriticsGuildButler(discord.Client):
                 
                 creation_date = channel_obj.created_at                                
 
-                token_reward = self.calculate_request_tokens(list_option, request_type, creation_date)
+                token_reward = await self.calculate_request_tokens(db,thread_id)
 
                 await self.update_tokens(db,critic_id,token_update_critic,request_id=thread_id,cause_id=command_id)
 
@@ -1249,6 +1370,13 @@ class CriticsGuildButler(discord.Client):
                 data = {"critic_id":critic_id}
                 res = cur.execute(query_update_critic,data)                                
                 
+                # Clear additional tokens from request
+                def token_update_request(previous):
+                    return 0
+
+                await self.update_tokens_request(db, thread_id, token_update_request)
+
+                # Send messages
                 if interaction.user.id != author_id:
                     try:
                         await self.send_dm(author_obj,f"{critic_mention} responded to your request {channel_obj.jump_url}. Would you recommend {critic_mention} as a good critic?",view=self.CompletedVoteCritic(self,thread_id,critic_id))
@@ -1536,12 +1664,12 @@ class CriticsGuildButler(discord.Client):
                 thread_id = interaction.channel_id
 
                 query_request = """
-                    SELECT r.author_id,r.state,r.list,r.type
+                    SELECT r.author_id,r.state,r.list,r.type,r.additional_tokens
                     FROM request r
                     WHERE r.thread_id = ?
                     """
                 res = cur.execute(query_request,(thread_id,))
-                (author_id,state_id,list_option_id,request_type_id) = res.fetchone()
+                (author_id,state_id,list_option_id,request_type_id,additional_tokens) = res.fetchone()
                 state = RequestState(state_id)
                 list_option = RequestList(list_option_id)
                 request_type = RequestType(request_type_id)
@@ -1565,21 +1693,38 @@ class CriticsGuildButler(discord.Client):
                 
                 # Return tokens
                 if list_option == RequestList.OPEN:
-                    tokens_returned_str = ""
+                    token_cost = additional_tokens
+
+                    if token_cost > 0:
+                        def token_update(previous):
+                            return previous + token_cost
+
+                        await self.update_tokens(db,author_id,token_update,request_id=thread_id,cause_id=command_id)
+                        tokens_returned_str = f"{self.tokens(token_cost)} were returned to {author_mention}."
+                    else:
+                        tokens_returned_str = ""
                 elif list_option == RequestList.CRITIC:
-                    token_cost = self.critic_list_token_costs[request_type.value - 1]
-                    def token_update(previous):
-                        return previous + token_cost
+                    token_cost = self.critic_list_token_costs[request_type.value - 1] + additional_tokens
 
-                    await self.update_tokens(db,author_id,token_update,request_id=thread_id,cause_id=command_id)
-                    tokens_returned_str = f"{self.tokens(token_cost)} were returned to {author_mention}."
+                    if token_cost > 0:
+                        def token_update(previous):
+                            return previous + token_cost
+
+                        await self.update_tokens(db,author_id,token_update,request_id=thread_id,cause_id=command_id)
+                        tokens_returned_str = f"{self.tokens(token_cost)} were returned to {author_mention}."
+                    else:
+                        tokens_returned_str = ""
                 elif list_option == RequestList.TRUSTED_CRITIC:
-                    token_cost = self.trusted_critic_list_token_costs[request_type.value - 1]
-                    def token_update(previous):
-                        return previous + token_cost
+                    token_cost = self.trusted_critic_list_token_costs[request_type.value - 1] + additional_tokens
 
-                    await self.update_tokens(db,author_id,token_update,request_id=thread_id,cause_id=command_id)
-                    tokens_returned_str = f"{self.tokens(token_cost)} were returned to {author_mention}."
+                    if token_cost > 0:
+                        def token_update(previous):
+                            return previous + token_cost
+
+                        await self.update_tokens(db,author_id,token_update,request_id=thread_id,cause_id=command_id)
+                        tokens_returned_str = f"{self.tokens(token_cost)} were returned to {author_mention}."
+                    else:
+                        tokens_returned_str = ""
                 
                 # Lock the thread
                 try:
@@ -1928,7 +2073,7 @@ class CriticsGuildButler(discord.Client):
 
                     date = datetime.datetime.fromisoformat(date)
                     
-                    token_reward = self.calculate_request_tokens(list_option, request_type, date)
+                    token_reward = await self.calculate_request_tokens(db, thread_id)
                     
                     delta_creation = datetime.datetime.now() - date
                     days_since_creation = delta_creation.days

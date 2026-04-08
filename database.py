@@ -1,4 +1,5 @@
 import sqlite3
+import datetime
 
 database_name = "database.db"
 
@@ -15,8 +16,65 @@ def init_database():
 
     if count == 0:
         create_database(db)
-
+    
+    res_version_table = cur.execute("SELECT COUNT(*) FROM sqlite_schema WHERE type='table' and name='bot_version'")
+    count_version_table = res.fetchone()[0]
+    
+    if count_version_table == 0:
+        create_version_table(db)
+        v4_init(db)
+    
     return db
+
+# The log is a very very basic print log, since the more serious log relies on the database to begin with.
+def v4_init(db,log=True):        
+    if log:
+        print("Initializing v4...")
+
+    cur = db.cursor()
+
+    try:
+        cur.execute("""
+            ALTER TABLE request
+            ADD COLUMN additional_tokens INTEGER DEFAULT 0 NOT NULL
+            """)
+
+        timestamp = datetime.datetime.now(tz = None)
+
+        cur.execute("""
+            INSERT INTO bot_version (version_number, init_date)
+            VALUES (4,?)
+            """, (timestamp))
+
+    except sqlite3.Error as e:
+        print(f"SQLite error when initializing v4: {e}")
+        return
+
+    if log:
+        print("v4 initialized!")
+
+# The log is a very very basic print log, since the more serious log relies on the database to begin with.
+def create_version_table(db,log=True):        
+    if log:
+        print("Creating version table...")
+
+    cur = db.cursor()
+
+    try:
+        cur.execute("""
+            CREATE TABLE bot_version
+            (
+                version_number INTEGER NOT NULL PRIMARY KEY,
+                init_date INTEGER NOT NULL
+            )
+            """)
+
+    except sqlite3.Error as e:
+        print(f"SQLite error when creating version table: {e}")
+        return
+
+    if log:
+        print("Version table created!")
 
 # The log is a very very basic print log, since the more serious log relies on the database to begin with.
 def create_database(db,log=True):        
