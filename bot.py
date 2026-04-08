@@ -229,7 +229,7 @@ class CriticsGuildButler(discord.Client):
         return f"<@{user_id}>"    
 
     def horizontal_separator(self, n=25):
-        return f"~~{" "*n}~~"
+        return f"~~{' '*n}~~"
 
     # Use a negative number to show just the icon.
     def tokens(self, n):
