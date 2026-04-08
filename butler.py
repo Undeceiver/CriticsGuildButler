@@ -31,6 +31,12 @@ max_requests = int(os.getenv("MAX_REQUESTS"))
 max_penalties = int(os.getenv("MAX_PENALTIES"))
 days_double_tokens = int(os.getenv("DAYS_DOUBLE_TOKENS"))
 react_sleep = int(os.getenv("REACT_SLEEP"))
+publish_channel_id = int(os.getenv("PUBLISH_CHANNEL_ID"))
+leaderboard_task_weekday = int(os.getenv("LEADERBOARD_TASK_WEEKDAY"))
+leaderboard_task_hour = int(os.getenv("LEADERBOARD_TASK_HOUR"))
+token_cycle_task_monthday = int(os.getenv("TOKEN_CYCLE_TASK_MONTHDAY"))
+token_cycle_task_hour = int(os.getenv("TOKEN_CYCLE_TASK_HOUR"))
+token_decay = float(os.getenv("TOKEN_DECAY"))
 
 bot = CriticsGuildButler(db_connect=connect,
                         server_ids=server_ids,
@@ -53,6 +59,12 @@ bot = CriticsGuildButler(db_connect=connect,
                         max_penalties=max_penalties,
                         days_double_tokens=days_double_tokens,
                         react_sleep=react_sleep,
+                        publish_channel_id=publish_channel_id,
+                        leaderboard_task_weekday=leaderboard_task_weekday,
+                        leaderboard_task_hour=leaderboard_task_hour,
+                        token_cycle_task_monthday=token_cycle_task_monthday,
+                        token_cycle_task_hour=token_cycle_task_hour,
+                        token_decay=token_decay,
                         print_log=True)
 
 token = os.getenv("DISCORD_TOKEN")

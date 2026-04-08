@@ -56,6 +56,10 @@ class CriticsGuildButler(discord.Client):
                  monthly_tokens, max_requests, max_penalties, 
                  days_double_tokens,
                  react_sleep,
+                 publish_channel_id,
+                 leaderboard_task_weekday, leaderboard_task_hour,
+                 token_cycle_task_monthday, token_cycle_task_hour,
+                 token_decay,
                  print_log=True):      
         intents = discord.Intents.default()
         intents.message_content = True
@@ -87,6 +91,16 @@ class CriticsGuildButler(discord.Client):
 
         self.react_sleep = react_sleep
 
+        self.publish_channel_id = publish_channel_id
+
+        self.leaderboard_task_weekday = leaderboard_task_weekday
+        self.leaderboard_task_hour = leaderboard_task_hour
+
+        self.token_cycle_task_monthday = token_cycle_task_monthday
+        self.token_cycle_task_hour = token_cycle_task_hour
+
+        self.token_decay = token_decay
+
         self.print_log = print_log
 
         super().__init__(intents=intents)
@@ -113,12 +127,18 @@ class CriticsGuildButler(discord.Client):
         await self.server_obj.fetch_roles()
 
         self.log_channel_obj = await self.fetch_channel(self.log_channel_id)
-        self.trusted_critic_role_obj = await self.server_obj.fetch_role(self.trusted_critic_role_id)
+        self.trusted_critic_role_obj = await self.server_obj.fetch_role(self.trusted_critic_role_id)        
+
+        # Start periodic tasks
+        if not self.show_leaderboards.is_running():
+            self.show_leaderboards.start()
+        if not self.token_cycle.is_running():
+            self.token_cycle.start()
 
         await self.log_system(db,f"Butler ready. Version info: {butler_version}")
 
         return
-
+    
     class CompletedVoteMapper(discord.ui.View):
         def __init__(self,bot_obj,request_id,mapper_id):
             super().__init__(timeout=None)
@@ -207,6 +227,9 @@ class CriticsGuildButler(discord.Client):
 
     def mention_user(self, user_id):
         return f"<@{user_id}>"    
+
+    def horizontal_separator(self, n=25):
+        return f"~~{" "*n}~~"
 
     # Use a negative number to show just the icon.
     def tokens(self, n):
@@ -723,6 +746,145 @@ class CriticsGuildButler(discord.Client):
             await self.log_system(db, f"Could not react to message: {e}", cause_id = command_id)        
                 
         await self.log_result(db,f"{user_mention} closed {channel_obj.jump_url}",interaction.user.id,request_id=thread_id,cause_id=command_id)
+
+    async def do_critic_upvote_leaderboard(self, db, channel_id, max_critics:int = 5, historic: bool = False):
+        cur = db.cursor()
+
+        channel_obj = await self.server_obj.fetch_channel(channel_id)
+
+        if historic:
+            query = """
+                SELECT
+                    u.user_id,
+                    u.critic_upvotes,
+                    u.historic_critic_upvotes
+                FROM user u
+                ORDER BY u.historic_critic_upvotes DESC
+                LIMIT :max_critics
+                """
+        else:
+            query = """
+                SELECT
+                    u.user_id,
+                    u.critic_upvotes,
+                    u.historic_critic_upvotes
+                FROM user u
+                ORDER BY u.critic_upvotes DESC
+                LIMIT :max_critics
+                """
+                
+        data = {"max_critics":max_critics}
+        res = cur.execute(query,data)
+        critics = res.fetchall()                                
+                                
+        await self.send_channel(channel_obj, f"👍TOP {max_critics} critics by upvotes👍")
+
+        i = 0
+        for critic in critics:
+            i += 1
+            (user_id, critic_upvotes, historic_critic_upvotes) = critic
+            critic_mention = self.mention_user(user_id)
+            await self.send_channel(channel_obj, f"{i} - {critic_mention} - {self.upvotes(critic_upvotes)}", mentions = False)
+
+        await self.send_channel(channel_obj, self.horizontal_separator())
+
+    async def do_token_leaderboard(self, db, channel_id, max_users:int = 5):
+        cur = db.cursor()
+
+        channel_obj = await self.server_obj.fetch_channel(channel_id)
+
+        query = """
+            SELECT
+                u.user_id,
+                u.tokens
+            FROM user u
+            ORDER BY u.tokens DESC
+            LIMIT :max_users
+            """
+                
+        data = {"max_users":max_users}
+        res = cur.execute(query,data)
+        users = res.fetchall()                                
+                                
+        await self.send_channel(channel_obj, f"🔹TOP {max_users} users by tokens🔹")
+
+        i = 0
+        for user in users:
+            i += 1
+            (user_id, user_tokens) = user
+            user_mention = self.mention_user(user_id)
+            await self.send_channel(channel_obj, f"{i} - {user_mention} - {self.tokens(user_tokens)}", mentions = False)
+
+        await self.send_channel(channel_obj, self.horizontal_separator())
+
+    async def do_wanted_requests(self, db, channel_id, max_requests:int = 10):                
+        cur = db.cursor()
+
+        channel_obj = await self.server_obj.fetch_channel(channel_id)                        
+
+        # We need to use log timestamps because we did not add creation date to the request table...
+        # Could add it in the future but would need to update existing stuff.
+        query = """
+            SELECT
+                r.thread_id,
+                r.author_id,
+                r.list,
+                r.critic_id,
+                r.type,
+                (SELECT MIN(l.timestamp) FROM log l WHERE l.request_id = r.thread_id) AS date
+            FROM request r
+            WHERE r.state IN (:open)
+            """
+        data = {"open": RequestState.OPEN.value}
+        res = cur.execute(query,data)
+        requests = res.fetchall()
+        
+        requests_with_tokens = [(thread_id,author_id,list_option_id,critic_id,type_id,date,await self.calculate_request_tokens(db,thread_id)) for (thread_id,author_id,list_option_id,critic_id,type_id,date) in requests]
+        
+        def by_tokens(request):
+            (thread_id,author_id,list_option_id,critic_id,type_id,date,token_reward) = request
+            return token_reward
+
+        requests_with_tokens.sort(reverse=True,key=by_tokens)
+                
+        await self.send_channel(channel_obj, f"‼️WANTED‼️ - TOP ({max_requests}) requests by 🔹token reward")
+
+        for (thread_id, author_id, list_option_id, critic_id, type_id, date, token_reward) in requests_with_tokens[:max_requests]:
+            list_option = RequestList(list_option_id)
+            request_type = RequestType(type_id)
+                        
+            if list_option == RequestList.CRITIC:
+                list_str = "(Critics only)"
+            elif list_option == RequestList.TRUSTED_CRITIC:
+                list_str = "(Trusted Critics only)"
+            else:
+                list_str = ""
+
+            author_mention = self.mention_user(author_id)                    
+
+            request_mention = await self.display_request(thread_id)
+
+            date = datetime.datetime.fromisoformat(date)                   
+                                
+            delta_creation = datetime.datetime.now() - date
+            days_since_creation = delta_creation.days
+
+            await self.send_channel(channel_obj, f"{self.tokens(token_reward)} - {request_mention} by {author_mention} - {days_since_creation} days old {list_str}.\n", mentions = False)
+
+        await self.send_channel(channel_obj, self.horizontal_separator())
+
+    async def do_token_cycle(self, db):
+        cur = db.cursor()
+
+        query = """
+            UPDATE user
+            SET claimed_tokens = 0, tokens = CAST(tokens * :decay AS INTEGER) + (tokens * :decay > CAST(tokens * :decay AS INTEGER))
+            """
+                
+        data = {"decay":self.token_decay}
+        cur.execute(query,data) 
+
+        await self.log_system(db, f"Automatic token cycle: Claims have been reset and token decay has been applied")
         
     ###
     # Logging
@@ -790,6 +952,38 @@ class CriticsGuildButler(discord.Client):
     async def log_penalties(self, db, user_id, previous_penalties, new_penalties, request_id=None, cause_id=None, **kwargs):
         user_mention = self.mention_user(user_id)
         return await self.log_result(db,f"{user_mention} went from {self.penalties(previous_penalties)} to {self.penalties(new_penalties)}.",user_id,request_id,cause_id,**kwargs)
+
+    ###
+    # Periodic tasks
+    ###
+    @tasks.loop(hours=1)
+    async def show_leaderboards(self):
+        db = self.db_connect()
+
+        now = datetime.datetime.utcnow()
+        if now.weekday() == self.leaderboard_task_weekday and now.hour == self.leaderboard_task_hour:
+            await self.log_system(db, f"Displaying weekly leaderboards")
+            await self.do_critic_upvote_leaderboard(db, self.publish_channel_id)
+            await self.do_token_leaderboard(db, self.publish_channel_id)
+            await self.do_wanted_requests(db, self.publish_channel_id)
+        else:
+            #await self.log_system(db, f"No tasks to run...")        
+            pass
+
+        db.close()
+
+    @tasks.loop(hours=1)
+    async def token_cycle(self):
+        db = self.db_connect()
+
+        now = datetime.datetime.utcnow()
+        if now.day == self.token_cycle_task_monthday and now.hour == self.token_cycle_task_hour:
+            await self.do_token_cycle(db)
+        else:
+            #await self.log_system(db, f"No tasks to run...")        
+            pass
+
+        db.close()
 
     ###
     # Reactions to events
@@ -2030,7 +2224,7 @@ class CriticsGuildButler(discord.Client):
         @self.tree.command(description="(Admin only) Display old request wanted board.")
         @app_commands.default_permissions(manage_guild=True)
         @app_commands.checks.has_permissions(manage_guild=True)        
-        async def wantedrequests(interaction: discord.Interaction):
+        async def wantedrequests(interaction: discord.Interaction, max_requests:int=10):
             await self.defer(interaction)            
             db = self.db_connect()
 
@@ -2038,47 +2232,9 @@ class CriticsGuildButler(discord.Client):
                 user_mention = self.mention_user(interaction.user.id)
                 channel_obj = await self.server_obj.fetch_channel(interaction.channel_id)                
                 channel_mention = channel_obj.jump_url
-                command_id = await self.log_command(db,f"{user_mention} displayed the old request wanted board in {channel_mention}.",interaction.user.id)
+                command_id = await self.log_command(db,f"{user_mention} displayed the request wanted board in {channel_mention}.",interaction.user.id)
                 
-                cur = db.cursor()
-
-                # We need to use log timestamps because we did not add creation date to the request table...
-                # Could add it in the future but would need to update existing stuff.
-                query = """
-                    SELECT
-                        r.thread_id,
-                        r.author_id,
-                        r.list,
-                        r.critic_id,
-                        r.type,
-                        (SELECT MIN(l.timestamp) FROM log l WHERE l.request_id = r.thread_id) AS date
-                    FROM request r
-                    WHERE r.state IN (:open)
-                        AND (julianday('now') - (SELECT MIN(julianday(l.timestamp)) FROM log l WHERE l.request_id = r.thread_id)) > :days
-                    ORDER BY (SELECT MIN(julianday(l.timestamp)) FROM log l WHERE l.request_id = r.thread_id) ASC
-                    """
-                data = {"open": RequestState.OPEN.value, "days": -1}
-                res = cur.execute(query,data)
-                requests = res.fetchall()
-                
-                await self.send_channel(channel_obj, f"‼️WANTED‼️ - Responses to old requests ({len(requests)}) - Extra {self.tokens(-1)} rewards")
-
-                for (thread_id, author_id, list_option_id, critic_id, type_id, date) in requests:
-                    list_option = RequestList(list_option_id)
-                    request_type = RequestType(type_id)
-
-                    author_mention = self.mention_user(author_id)                    
-
-                    request_mention = await self.display_request(thread_id)
-
-                    date = datetime.datetime.fromisoformat(date)
-                    
-                    token_reward = await self.calculate_request_tokens(db, thread_id)
-                    
-                    delta_creation = datetime.datetime.now() - date
-                    days_since_creation = delta_creation.days
-
-                    await self.send_channel(channel_obj, f"{self.tokens(token_reward)} - {request_mention} by {author_mention} - {days_since_creation} days old.\n", mentions = False)
+                await self.do_wanted_requests(db,channel_id=interaction.channel_id,max_requests=max_requests)
                 
                 await self.send_response(interaction, "Command complete.")
             except Exception as e:                
@@ -2577,7 +2733,34 @@ class CriticsGuildButler(discord.Client):
                     i += 1
                     (user_id, stars, historic_stars) = critic
                     critic_mention = self.mention_user(user_id)
-                    await self.send_channel(channel_obj, f"{i} - {critic_mention} - {self.stars(stars)}", mentions = True)
+                    await self.send_channel(channel_obj, f"{i} - {critic_mention} - {self.stars(stars)}", mentions = False)
+                
+                await self.send_response(interaction, "Command complete.")
+            except Exception as e:                
+                await self.log_system(db, f"UNCAUGHT EXCEPTION! - {str(e)}")
+            
+            db.close()
+
+        @self.tree.command(description=f"(Admin only) Show {self.tokens(-1)} leaderboard.")
+        @app_commands.default_permissions(manage_guild=True)
+        @app_commands.checks.has_permissions(manage_guild=True)
+        @app_commands.describe(max_users="Maximum number of users to show.")
+        async def tokenleaderboard(interaction: discord.Interaction, max_users:int = 5):            
+            await self.defer(interaction)
+            #if not await self.check_admin_channel(interaction):                    
+            #    return
+
+            db = self.db_connect()
+
+            try:
+                user_mention = self.mention_user(interaction.user.id)
+                channel_obj = await self.server_obj.fetch_channel(interaction.channel_id)                
+                channel_mention = channel_obj.jump_url
+                message = f"{user_mention} checked the {self.tokens(-1)} leaderboard (maximum of {max_users} users) in {channel_mention}."
+
+                command_id = await self.log_command(db,message,interaction.user.id)
+                
+                await self.do_token_leaderboard(db, interaction.channel_id, max_users = max_users)
                 
                 await self.send_response(interaction, "Command complete.")
             except Exception as e:                
@@ -2589,7 +2772,7 @@ class CriticsGuildButler(discord.Client):
         @app_commands.default_permissions(manage_guild=True)
         @app_commands.checks.has_permissions(manage_guild=True)
         @app_commands.describe(max_critics="Maximum number of critics to show.")
-        async def criticupvoteleaderboard(interaction: discord.Interaction, max_critics:int = 10, historic: bool = False):
+        async def criticupvoteleaderboard(interaction: discord.Interaction, max_critics:int = 5, historic: bool = False):            
             await self.defer(interaction)
             #if not await self.check_admin_channel(interaction):                    
             #    return
@@ -2607,41 +2790,7 @@ class CriticsGuildButler(discord.Client):
 
                 command_id = await self.log_command(db,message,interaction.user.id)
                 
-                cur = db.cursor()
-
-                if historic:
-                    query = """
-                        SELECT
-                            u.user_id,
-                            u.critic_upvotes,
-                            u.historic_critic_upvotes
-                        FROM user u
-                        ORDER BY u.historic_critic_upvotes DESC
-                        LIMIT :max_critics
-                        """
-                else:
-                    query = """
-                        SELECT
-                            u.user_id,
-                            u.critic_upvotes,
-                            u.historic_critic_upvotes
-                        FROM user u
-                        ORDER BY u.critic_upvotes DESC
-                        LIMIT :max_critics
-                        """
-                
-                data = {"max_critics":max_critics}
-                res = cur.execute(query,data)
-                critics = res.fetchall()                                
-                                
-                await self.send_channel(channel_obj, f"👍UPVOTE LEADERBOARD👍 - TOP {max_critics}")
-
-                i = 0
-                for critic in critics:
-                    i += 1
-                    (user_id, critic_upvotes, historic_critic_upvotes) = critic
-                    critic_mention = self.mention_user(user_id)
-                    await self.send_channel(channel_obj, f"{i} - {critic_mention} - {self.upvotes(critic_upvotes)}", mentions = True)
+                await self.do_critic_upvote_leaderboard(db, interaction.channel_id, max_critics = max_critics, historic = historic)
                 
                 await self.send_response(interaction, "Command complete.")
             except Exception as e:                
@@ -2705,7 +2854,7 @@ class CriticsGuildButler(discord.Client):
                     i += 1
                     (user_id, mapper_upvotes, historic_mapper_upvotes) = mapper
                     mapper_mention = self.mention_user(user_id)
-                    await self.send_channel(channel_obj, f"{i} - {mapper_mention} - {self.upvotes(mapper_upvotes)}", mentions = True)
+                    await self.send_channel(channel_obj, f"{i} - {mapper_mention} - {self.upvotes(mapper_upvotes)}", mentions = False)
                 
                 await self.send_response(interaction, "Command complete.")
             except Exception as e:                
@@ -2754,7 +2903,7 @@ class CriticsGuildButler(discord.Client):
                     i += 1
                     (user_id, critic_requests) = critic
                     critic_mention = self.mention_user(user_id)
-                    await self.send_channel(channel_obj, f"{i} - {critic_mention} - {critic_requests} completed requests", mentions = True)
+                    await self.send_channel(channel_obj, f"{i} - {critic_mention} - {critic_requests} completed requests", mentions = False)
                 
                 await self.send_response(interaction, "Command complete.")
             except Exception as e:                
@@ -2803,7 +2952,7 @@ class CriticsGuildButler(discord.Client):
                     i += 1
                     (user_id, mapper_requests) = mapper
                     mapper_mention = self.mention_user(user_id)
-                    await self.send_channel(channel_obj, f"{i} - {mapper_mention} - {mapper_requests} completed requests", mentions = True)
+                    await self.send_channel(channel_obj, f"{i} - {mapper_mention} - {mapper_requests} completed requests", mentions = False)
                 
                 await self.send_response(interaction, "Command complete.")
             except Exception as e:                
