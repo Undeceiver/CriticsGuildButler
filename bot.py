@@ -584,7 +584,7 @@ class CriticsGuildButler(discord.Client):
         elif thread.parent_id == self.critic_list_channel_id:
             await self.deleterequest(thread)
         elif thread.parent_id == self.trusted_critic_list_channel_id:
-            await self.deletecrequest(thread)
+            await self.deleterequest(thread)
 
     async def process_message(self, message: discord.Message):        
         if message.author.id == self.bot_id:
